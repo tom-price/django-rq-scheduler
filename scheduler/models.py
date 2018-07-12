@@ -3,6 +3,7 @@ import importlib
 from datetime import timedelta
 
 import croniter
+import json
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -21,6 +22,20 @@ class BaseJob(TimeStampedModel):
 
     name = models.CharField(_('name'), max_length=128, unique=True)
     callable = models.CharField(_('callable'), max_length=2048)
+    callable_args = models.CharField(
+         _('args'), blank=True, max_length=2048,
+         help_text=_(
+             'A comma separated list of arguments (to be passed as strings)'
+             ' in order e.g.: arg1, arg2'
+         )
+    )
+    callable_kwargs = models.CharField(
+        _('kwargs'), blank=True, max_length=2048,
+        help_text=_(
+            'A json string to be parsed by json.loads e.g.: '
+            '{"kwarg1": "a", "kwarg2": 2}'
+        )
+    )
     enabled = models.BooleanField(_('enabled'), default=True)
     queue = models.CharField(_('queue'), max_length=16)
     job_id = models.CharField(
@@ -55,6 +70,7 @@ class BaseJob(TimeStampedModel):
     def clean(self):
         self.clean_callable()
         self.clean_queue()
+        self.clean_kwargs()
 
     def clean_callable(self):
         try:
@@ -72,6 +88,16 @@ class BaseJob(TimeStampedModel):
                 'queue': ValidationError(
                     _('Invalid queue, must be one of: {}'.format(
                         ', '.join(queue_keys))), code='invalid')
+            })
+
+    def clean_kwargs(self):
+        try:
+            if self.callable_kwargs:
+                json.loads(self.callable_kwargs)
+        except:
+            raise ValidationError({
+                'callable_kwargs': ValidationError(
+                    _('Invalid kwargs, must be parsable by json.loads'), code='invalid')
             })
 
     def is_scheduled(self):
@@ -100,13 +126,15 @@ class BaseJob(TimeStampedModel):
     def schedule(self):
         if self.is_schedulable() is False:
             return False
-        kwargs = {}
+        kwargs = self.parse_kwargs()
         if self.timeout:
             kwargs['timeout'] = self.timeout
         if self.result_ttl is not None:
             kwargs['result_ttl'] = self.result_ttl
         job = self.scheduler().enqueue_at(
-            self.schedule_time_utc(), self.callable_func(),
+            self.schedule_time_utc(),
+            self.callable_func(),
+            *self.parse_args(),
             **kwargs
         )
         self.job_id = job.id
@@ -120,6 +148,26 @@ class BaseJob(TimeStampedModel):
 
     def schedule_time_utc(self):
         return utc(self.scheduled_time)
+
+    def parse_args(self):
+        if self.callable_args is not "":
+            return [x.strip() for x in self.callable_args.split(',')]
+        return []
+
+    def parse_kwargs(self):
+        if self.callable_kwargs is not "":
+            return json.loads(self.callable_kwargs)
+        return {}
+
+    def function_string(self):
+        func = self.callable + "(\u200b{})"  # zero-width space allows better text-wrap
+        args = self.parse_args()
+        args_list = [repr(arg) for arg in args]
+        kwargs = self.parse_kwargs()
+        kwargs_list = [k + '=' + repr(v) for (k, v) in kwargs.items()]
+        return func.format(', '.join(args_list + kwargs_list))
+
+    function_string.short_description = 'Callable'
 
     class Meta:
         abstract = True
@@ -172,8 +220,8 @@ class RepeatableJob(ScheduledTimeMixin, BaseJob):
         if self.is_schedulable() is False:
             return False
         kwargs = {
-            'scheduled_time': self.schedule_time_utc(),
-            'func': self.callable_func(),
+            'args': self.parse_args(),
+            'kwargs': self.parse_kwargs(),
             'interval': self.interval_seconds(),
             'repeat': self.repeat
         }
@@ -181,7 +229,11 @@ class RepeatableJob(ScheduledTimeMixin, BaseJob):
             kwargs['timeout'] = self.timeout
         if self.result_ttl is not None:
             kwargs['result_ttl'] = self.result_ttl
-        job = self.scheduler().schedule(**kwargs)
+        job = self.scheduler().schedule(
+            self.schedule_time_utc(),
+            self.callable_func(),
+            **kwargs
+        )
         self.job_id = job.id
         return True
 
@@ -217,13 +269,17 @@ class CronJob(BaseJob):
         if self.is_schedulable() is False:
             return False
         kwargs = {
-            'func': self.callable_func(),
-            'cron_string': self.cron_string,
+            'args': self.parse_args(),
+            'kwargs': self.parse_kwargs(),
             'repeat': self.repeat
         }
         if self.timeout:
             kwargs['timeout'] = self.timeout
-        job = self.scheduler().cron(**kwargs)
+        job = self.scheduler().cron(
+            self.cron_string,
+            self.callable_func(),
+            **kwargs
+        )
         self.job_id = job.id
         return True
 

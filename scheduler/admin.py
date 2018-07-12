@@ -35,14 +35,14 @@ class QueueMixin(object):
 @admin.register(ScheduledJob)
 class ScheduledJobAdmin(QueueMixin, admin.ModelAdmin):
     list_display = (
-        'name', 'job_id', 'is_scheduled', 'scheduled_time', 'enabled')
+        'name', 'job_id', ScheduledJob.function_string, 'is_scheduled', 'scheduled_time', 'enabled')
     list_filter = ('enabled', )
     list_editable = ('enabled', )
 
     readonly_fields = ('job_id', )
     fieldsets = (
         (None, {
-            'fields': ('name', 'callable', 'enabled', ),
+            'fields': ('name', 'callable', 'callable_args', 'callable_kwargs', 'enabled', ),
         }),
         (_('RQ Settings'), {
             'fields': ('queue', 'job_id', ),
@@ -60,7 +60,7 @@ class ScheduledJobAdmin(QueueMixin, admin.ModelAdmin):
 @admin.register(RepeatableJob)
 class RepeatableJobAdmin(QueueMixin, admin.ModelAdmin):
     list_display = (
-        'name', 'job_id', 'is_scheduled', 'scheduled_time', 'interval_display',
+        'name', 'job_id', RepeatableJob.function_string, 'is_scheduled', 'scheduled_time', 'interval_display',
         'enabled')
     list_filter = ('enabled', )
     list_editable = ('enabled', )
@@ -68,7 +68,7 @@ class RepeatableJobAdmin(QueueMixin, admin.ModelAdmin):
     readonly_fields = ('job_id', )
     fieldsets = (
         (None, {
-            'fields': ('name', 'callable', 'enabled', ),
+            'fields': ('name', 'callable', 'callable_args', 'callable_kwargs', 'enabled', ),
         }),
         (_('RQ Settings'), {
             'fields': ('queue', 'job_id', ),
@@ -88,14 +88,14 @@ class RepeatableJobAdmin(QueueMixin, admin.ModelAdmin):
 @admin.register(CronJob)
 class CronJobAdmin(QueueMixin, admin.ModelAdmin):
     list_display = (
-        'name', 'job_id', 'is_scheduled', 'cron_string', 'enabled')
+        'name', 'job_id', CronJob.function_string, 'is_scheduled', 'cron_string', 'enabled')
     list_filter = ('enabled', )
     list_editable = ('enabled', )
 
     readonly_fields = ('job_id', )
     fieldsets = (
         (None, {
-            'fields': ('name', 'callable', 'enabled', ),
+            'fields': ('name', 'callable', 'callable_args', 'callable_kwargs', 'enabled', ),
         }),
         (_('RQ Settings'), {
             'fields': ('queue', 'job_id', ),

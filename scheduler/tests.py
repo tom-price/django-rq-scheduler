@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.test import TestCase
+from django.utils import timezone
 
 import factory
 import pytz
@@ -22,7 +23,7 @@ class ScheduledJobFactory(factory.Factory):
 
     @factory.lazy_attribute
     def scheduled_time(self):
-        return datetime.now() + timedelta(days=1)
+        return timezone.now() + timedelta(days=1)
 
     class Meta:
         model = ScheduledJob
@@ -41,7 +42,7 @@ class RepeatableJobFactory(factory.Factory):
 
     @factory.lazy_attribute
     def scheduled_time(self):
-        return datetime.now() + timedelta(minutes=1)
+        return timezone.now() + timedelta(minutes=1)
 
     class Meta:
         model = RepeatableJob
@@ -65,6 +66,14 @@ class CronJobFactory(factory.Factory):
 def test_job():
     return 1 + 1
 
+
+@job
+def test_args_kwargs(*args, **kwargs):
+    func = "test_args_kwargs({0}, {1})"
+    args_list = [repr(arg) for arg in args]
+    arg_string = ', '.join(args_list)
+    kwarg_string = ', '.join([k + '=' + repr(kwargs[k]) for k in kwargs])
+    return func.format(arg_string, kwarg_string)
 
 test_non_callable = 'I am a teapot'
 
@@ -202,6 +211,29 @@ class TestScheduledJob(TestCase):
         job.delete()
         is_scheduled = job_id in scheduler
         self.assertFalse(is_scheduled)
+
+    def test_kwarg_string_parsing(self):
+        job = self.JobClass()
+        job.callable_kwargs = '{"kwarg1": "a", "kwarg2": "b"}'
+        func = job.parse_kwargs()
+        expected = dict(kwarg1="a", kwarg2="b")
+        self.assertEqual(expected, func)
+
+    def test_arg_string_parsing(self):
+        job = self.JobClass()
+        job.callable_args = 'arg1, arg2'
+        func = job.parse_args()
+        expected = ["arg1", "arg2"]
+        self.assertEqual(expected, func)
+
+    def test_function_string(self):
+        job = self.JobClass()
+        job.callable = 'fname'
+        job.callable_args = 'arg1, arg2'
+        job.callable_kwargs = '{"kwarg1": "a", "kwarg2": "b"}'
+        func = job.function_string()
+        expected = "fname(\u200b'arg1', 'arg2', kwarg1='a', kwarg2='b')"
+        self.assertEqual(expected, func)
 
 
 class TestRepeatableJob(TestScheduledJob):
