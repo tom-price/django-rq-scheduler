@@ -3,9 +3,10 @@ import importlib
 from datetime import timedelta
 
 import croniter
-import json
 
 from django.conf import settings
+from django.contrib.contenttypes.fields import GenericForeignKey, GenericRelation
+from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.templatetags.tz import utc
@@ -18,24 +19,63 @@ from model_utils.models import TimeStampedModel
 
 
 @python_2_unicode_compatible
+class BaseJobArg(models.Model):
+
+    ARG_NAME = Choices(
+        ('str_val', _('string')),
+        ('int_val', _('int')),
+        ('datetime_val', _('Datetime')),
+    )
+    str_val = models.CharField(_('String Value'), blank=True, max_length=255)
+    int_val = models.IntegerField(_('Int Value'), blank=True, null=True)
+    datetime_val = models.DateTimeField(_('Datetime Value'), blank=True, null=True)
+    
+    arg_name = models.CharField(
+        _('Argument Type'), max_length=12, choices=ARG_NAME, default=ARG_NAME.str_val
+    )
+
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
+    object_id = models.PositiveIntegerField()
+    content_object = GenericForeignKey()
+
+    def clean(self):
+        self.clean_one_value()
+
+    def clean_one_value(self):
+        count = 0
+        count += 1 if self.str_val != '' else 0
+        count += 1 if self.int_val else 0
+        count += 1 if self.datetime_val else 0
+        if count == 0:
+            raise ValidationError({
+                'arg_name': ValidationError(
+                    _('At least one arg type must have a value'), code='invalid')
+            })
+        if count > 1:
+            raise ValidationError({
+                'arg_name': ValidationError(
+                    _('There are multiple arg types with values'), code='invalid')
+            })
+
+    class Meta:
+        abstract = True
+
+
+class JobArg(BaseJobArg):
+    pass
+
+
+class JobKwarg(BaseJobArg):
+    key = models.CharField(max_length=255)
+
+
+@python_2_unicode_compatible
 class BaseJob(TimeStampedModel):
 
     name = models.CharField(_('name'), max_length=128, unique=True)
     callable = models.CharField(_('callable'), max_length=2048)
-    callable_args = models.CharField(
-         _('args'), blank=True, max_length=2048,
-         help_text=_(
-             'A comma separated list of arguments (to be passed as strings)'
-             ' in order e.g.: arg1, arg2'
-         )
-    )
-    callable_kwargs = models.CharField(
-        _('kwargs'), blank=True, max_length=2048,
-        help_text=_(
-            'A json string to be parsed by json.loads e.g.: '
-            '{"kwarg1": "a", "kwarg2": 2}'
-        )
-    )
+    callable_args = GenericRelation(JobArg)
+    callable_kwargs = GenericRelation(JobKwarg)
     enabled = models.BooleanField(_('enabled'), default=True)
     queue = models.CharField(_('queue'), max_length=16)
     job_id = models.CharField(
@@ -70,7 +110,6 @@ class BaseJob(TimeStampedModel):
     def clean(self):
         self.clean_callable()
         self.clean_queue()
-        self.clean_kwargs()
 
     def clean_callable(self):
         try:
@@ -88,16 +127,6 @@ class BaseJob(TimeStampedModel):
                 'queue': ValidationError(
                     _('Invalid queue, must be one of: {}'.format(
                         ', '.join(queue_keys))), code='invalid')
-            })
-
-    def clean_kwargs(self):
-        try:
-            if self.callable_kwargs:
-                json.loads(self.callable_kwargs)
-        except:
-            raise ValidationError({
-                'callable_kwargs': ValidationError(
-                    _('Invalid kwargs, must be parsable by json.loads'), code='invalid')
             })
 
     def is_scheduled(self):
@@ -150,17 +179,15 @@ class BaseJob(TimeStampedModel):
         return utc(self.scheduled_time)
 
     def parse_args(self):
-        if self.callable_args is not "":
-            return [x.strip() for x in self.callable_args.split(',')]
-        return []
+        args = self.callable_args.values().order_by('id')
+        return [arg[arg['arg_name']] for arg in args]
 
     def parse_kwargs(self):
-        if self.callable_kwargs is not "":
-            return json.loads(self.callable_kwargs)
-        return {}
+        kwargs = self.callable_kwargs.values().order_by('id')
+        return {kwarg['key']: kwarg[kwarg['arg_name']] for kwarg in kwargs}
 
     def function_string(self):
-        func = self.callable + "(\u200b{})"  # zero-width space allows better text-wrap
+        func = self.callable + "(\u200b{})"  # zero-width space allows textwrap
         args = self.parse_args()
         args_list = [repr(arg) for arg in args]
         kwargs = self.parse_kwargs()
@@ -287,3 +314,4 @@ class CronJob(BaseJob):
         verbose_name = _('Cron Job')
         verbose_name_plural = _('Cron Jobs')
         ordering = ('name', )
+

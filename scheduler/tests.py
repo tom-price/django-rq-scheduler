@@ -10,7 +10,8 @@ from django.utils import timezone
 import factory
 import pytz
 from django_rq import job
-from scheduler.models import CronJob, RepeatableJob, ScheduledJob
+from scheduler.models import CronJob, RepeatableJob, ScheduledJob, \
+    JobArg, JobKwarg
 
 
 class ScheduledJobFactory(factory.Factory):
@@ -211,29 +212,6 @@ class TestScheduledJob(TestCase):
         job.delete()
         is_scheduled = job_id in scheduler
         self.assertFalse(is_scheduled)
-
-    def test_kwarg_string_parsing(self):
-        job = self.JobClass()
-        job.callable_kwargs = '{"kwarg1": "a", "kwarg2": "b"}'
-        func = job.parse_kwargs()
-        expected = dict(kwarg1="a", kwarg2="b")
-        self.assertEqual(expected, func)
-
-    def test_arg_string_parsing(self):
-        job = self.JobClass()
-        job.callable_args = 'arg1, arg2'
-        func = job.parse_args()
-        expected = ["arg1", "arg2"]
-        self.assertEqual(expected, func)
-
-    def test_function_string(self):
-        job = self.JobClass()
-        job.callable = 'fname'
-        job.callable_args = 'arg1, arg2'
-        job.callable_kwargs = '{"kwarg1": "a", "kwarg2": "b"}'
-        func = job.function_string()
-        expected = "fname(\u200b'arg1', 'arg2', kwarg1='a', kwarg2='b')"
-        self.assertEqual(expected, func)
 
 
 class TestRepeatableJob(TestScheduledJob):
