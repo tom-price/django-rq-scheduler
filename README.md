@@ -17,6 +17,7 @@ Testing also requires:
 
 * factory_boy >= 2.6.1
 * psycopg2 >= 2.6.1
+* fakeredis >= 0.11.0
 
 
 ## Usage
