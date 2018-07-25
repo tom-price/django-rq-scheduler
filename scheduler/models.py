@@ -40,6 +40,7 @@ class BaseJob(TimeStampedModel):
                     '0: Result gets deleted immediately. >0: Result expires '
                     'after n seconds.')
     )
+    repeat = models.PositiveIntegerField(_('repeat'), blank=True, null=True)
 
     def __str__(self):
         return self.name
@@ -97,29 +98,11 @@ class BaseJob(TimeStampedModel):
             return False
         return self.enabled
 
-    def schedule(self):
-        if self.is_schedulable() is False:
-            return False
-        kwargs = {}
-        if self.timeout:
-            kwargs['timeout'] = self.timeout
-        if self.result_ttl is not None:
-            kwargs['result_ttl'] = self.result_ttl
-        job = self.scheduler().enqueue_at(
-            self.schedule_time_utc(), self.callable_func(),
-            **kwargs
-        )
-        self.job_id = job.id
-        return True
-
     def unschedule(self):
         if self.is_scheduled():
             self.scheduler().cancel(self.job_id)
         self.job_id = None
         return True
-
-    def schedule_time_utc(self):
-        return utc(self.scheduled_time)
 
     class Meta:
         abstract = True
@@ -137,6 +120,22 @@ class ScheduledTimeMixin(models.Model):
 
 
 class ScheduledJob(ScheduledTimeMixin, BaseJob):
+    repeat = None
+
+    def schedule(self):
+        if self.is_schedulable() is False:
+            return False
+        kwargs = {}
+        if self.timeout:
+            kwargs['timeout'] = self.timeout
+        if self.result_ttl is not None:
+            kwargs['job_result_ttl'] = self.result_ttl
+        job = self.scheduler().enqueue_at(
+            self.schedule_time_utc(), self.callable_func(),
+            **kwargs
+        )
+        self.job_id = job.id
+        return True
 
     class Meta:
         verbose_name = _('Scheduled Job')
@@ -157,7 +156,6 @@ class RepeatableJob(ScheduledTimeMixin, BaseJob):
     interval_unit = models.CharField(
         _('interval unit'), max_length=12, choices=UNITS, default=UNITS.hours
     )
-    repeat = models.PositiveIntegerField(_('repeat'), blank=True, null=True)
 
     def interval_display(self):
         return '{} {}'.format(self.interval, self.get_interval_unit_display())
@@ -198,7 +196,6 @@ class CronJob(BaseJob):
         _('cron string'), max_length=64,
         help_text=_('Define the schedule in a crontab like syntax.')
     )
-    repeat = models.PositiveIntegerField(_('repeat'), blank=True, null=True)
 
     def clean(self):
         super(CronJob, self).clean()
