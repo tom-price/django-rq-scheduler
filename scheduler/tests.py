@@ -3,6 +3,7 @@ from __future__ import unicode_literals
 from datetime import datetime, timedelta
 
 from django.conf import settings
+from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import timezone
@@ -12,14 +13,12 @@ from fakeredis import FakeStrictRedis
 import pytz
 import django_rq
 from django_rq import job
-from scheduler.models import BaseJob, CronJob, RepeatableJob, ScheduledJob
+from scheduler.models import BaseJob, CronJob, RepeatableJob, ScheduledJob,\
+    BaseJobArg, JobArg, JobKwarg
 import django_rq.queues
 
 
 class BaseJobFactory(factory.DjangoModelFactory):
-    class Meta:
-        django_get_or_create = ('name',)
-
     name = factory.Sequence(lambda n: 'Scheduled Job %d' % n)
     queue = list(settings.RQ_QUEUES.keys())[0]
     callable = 'scheduler.tests.test_job'
@@ -27,22 +26,23 @@ class BaseJobFactory(factory.DjangoModelFactory):
     timeout = None
     # job_id = None
 
+    class Meta:
+        django_get_or_create = ('name',)
+        abstract = True
+
 
 class ScheduledJobFactory(BaseJobFactory):
-    class Meta:
-        model = ScheduledJob
-
     result_ttl = None
 
     @factory.lazy_attribute
     def scheduled_time(self):
         return timezone.now() + timedelta(days=1)
 
+    class Meta:
+        model = ScheduledJob
+
 
 class RepeatableJobFactory(BaseJobFactory):
-    class Meta:
-        model = RepeatableJob
-
     result_ttl = None
     interval = 1
     interval_unit = 'hours'
@@ -52,13 +52,43 @@ class RepeatableJobFactory(BaseJobFactory):
     def scheduled_time(self):
         return timezone.now() + timedelta(minutes=1)
 
+    class Meta:
+        model = RepeatableJob
+
 
 class CronJobFactory(BaseJobFactory):
+    cron_string = "0 0 * * *"
+    repeat = None
+
     class Meta:
         model = CronJob
 
-    cron_string = "0 0 * * *"
-    repeat = None
+
+class BaseJobArgFactory(factory.DjangoModelFactory):
+    arg_name = 'str_val'
+    str_val = ''
+    int_val = None
+    datetime_val = None
+    object_id = factory.SelfAttribute('content_object.id')
+    content_type = factory.LazyAttribute(
+        lambda o: ContentType.objects.get_for_model(o.content_object))
+    content_object = factory.SubFactory(ScheduledJobFactory)
+
+    class Meta:
+        exclude = ['content_object']
+        abstract = True
+
+
+class JobArgFactory(BaseJobArgFactory):
+    class Meta:
+        model = JobArg
+
+
+class JobKwargFactory(BaseJobArgFactory):
+    key = factory.Sequence(lambda n: 'key%d' % n)
+
+    class Meta:
+        model = JobKwarg
 
 
 @job
@@ -68,25 +98,55 @@ def test_job():
 
 @job
 def test_args_kwargs(*args, **kwargs):
-    func = "test_args_kwargs({0}, {1})"
+    func = "test_args_kwargs({})"
     args_list = [repr(arg) for arg in args]
-    arg_string = ', '.join(args_list)
-    kwarg_string = ', '.join([k + '=' + repr(kwargs[k]) for k in kwargs])
-    return func.format(arg_string, kwarg_string)
+    kwargs_list = [k + '=' + repr(v) for (k, v) in kwargs.items()]
+    return func.format(', '.join(args_list + kwargs_list))
+
 
 test_non_callable = 'I am a teapot'
 
 
 class BaseTestCases:
 
+    class TestBaseJobArg(TestCase):
+        JobArgClass = BaseJobArg
+        JobArgClassFactory = BaseJobArgFactory
+
+        def test_clean_one_value_empty(self):
+            arg = self.JobArgClassFactory()
+            with self.assertRaises(ValidationError):
+                arg.clean_one_value()
+
+        def test_clean_one_value_invalid_str_int(self):
+            arg = self.JobArgClassFactory(str_val='not blank', int_val=1, datetime_val=None)
+            with self.assertRaises(ValidationError):
+                arg.clean_one_value()
+
+        def test_clean_one_value_invalid_str_datetime(self):
+            arg = self.JobArgClassFactory(str_val='not blank', int_val=None, datetime_val=timezone.now())
+            with self.assertRaises(ValidationError):
+                arg.clean_one_value()
+
+        def test_clean_one_value_invalid_int_datetime(self):
+            arg = self.JobArgClassFactory(str_val= '', int_val=1, datetime_val=timezone.now())
+            with self.assertRaises(ValidationError):
+                arg.clean_one_value()
+
+        def test_clean_invalid(self):
+            arg = self.JobArgClassFactory(str_val='str', int_val=1, datetime_val=timezone.now())
+            with self.assertRaises(ValidationError):
+                arg.clean()
+
+        def test_clean(self):
+            arg = self.JobArgClassFactory(str_val='something')
+            self.assertIsNone(arg.clean())
+
+
     class TestBaseJob(TestCase):
         def setUp(self):
             django_rq.queues.get_redis_connection = lambda _, strict: FakeStrictRedis()
-            # Turn on synchronous mode to execute jobs immediately instead of passing them off to the workers
-            for config in settings.RQ_QUEUES.values():
-                config["ASYNC"] = False
 
-        # Never runs as BaseJob but helps IDE auto-completes
         JobClass = BaseJob
         JobClassFactory = BaseJobFactory
 
@@ -227,10 +287,63 @@ class BaseTestCases:
             entry = next(i for i in scheduler.get_jobs() if i.id == job.job_id)
             self.assertEqual(entry.timeout, 500)
 
+        def test_parse_args(self):
+            job = self.JobClassFactory()
+            date = timezone.now()
+            JobArgFactory(str_val='one', content_object=job)
+            JobArgFactory(arg_name='int_val', int_val=2, content_object=job)
+            JobArgFactory(arg_name='datetime_val', datetime_val=date, content_object=job)
+            self.assertEqual(job.parse_args(), ['one', 2, date])
+
+        def test_parse_kwargs(self):
+            job = self.JobClassFactory()
+            date = timezone.now()
+            JobKwargFactory(key='key1', arg_name='str_val', str_val='one', content_object=job)
+            JobKwargFactory(key='key2', arg_name='int_val', int_val=2, content_object=job)
+            JobKwargFactory(key='key3', arg_name='datetime_val', datetime_val=date, content_object=job)
+            self.assertEqual(job.parse_kwargs(), dict(key1='one', key2=2, key3=date))
+
+        def test_function_string(self):
+            job = self.JobClassFactory()
+            date = datetime(2018, 1, 1)
+            JobArgFactory(arg_name='str_val', str_val='one', content_object=job)
+            JobArgFactory(arg_name='int_val', int_val=1, content_object=job)
+            JobArgFactory(arg_name='datetime_val', datetime_val=date, content_object=job)
+            JobKwargFactory(key='key1', arg_name='str_val', str_val='one', content_object=job)
+            JobKwargFactory(key='key2', arg_name='int_val', int_val=2, content_object=job)
+            JobKwargFactory(key='key3', arg_name='datetime_val', datetime_val=date, content_object=job)
+            self.assertEqual(job.function_string(),
+                             ("scheduler.tests.test_job(\u200b'one', 1, datetime.datetime(2018, 1, 1, 0, 0), " +
+                              "key1='one', key2=2, key3=datetime.datetime(2018, 1, 1, 0, 0))"))
+
+        def test_callable_result(self):
+            job = self.JobClassFactory()
+            scheduler = django_rq.get_scheduler(job.queue)
+            entry = next(i for i in scheduler.get_jobs() if i.id == job.job_id)
+            self.assertEqual(entry.perform(), 2)
+
+        def test_callable_empty_args_and_kwagrgs(self):
+            job = self.JobClassFactory(callable='scheduler.tests.test_args_kwargs')
+            scheduler = django_rq.get_scheduler(job.queue)
+            entry = next(i for i in scheduler.get_jobs() if i.id == job.job_id)
+            self.assertEqual(entry.perform(), 'test_args_kwargs()')
+
+        def test_callable_args_and_kwagrgs(self):
+            job = self.JobClassFactory(callable='scheduler.tests.test_args_kwargs')
+            date = datetime(2018, 1, 1)
+            JobArgFactory(arg_name='str_val', str_val='one', content_object=job)
+            JobKwargFactory(key='key1', arg_name='int_val', int_val=2, content_object=job)
+            JobKwargFactory(key='key2', arg_name='datetime_val', datetime_val=date, content_object=job)
+            job.save()
+            scheduler = django_rq.get_scheduler(job.queue)
+            entry = next(i for i in scheduler.get_jobs() if i.id == job.job_id)
+            self.assertEqual(entry.perform(),
+                             "test_args_kwargs('one', key1=2, key2=datetime.datetime(2018, 1, 1, 0, 0))")
+
     class TestSchedulableJob(TestBaseJob):
         # Currently ScheduledJob and RepeatableJob
-        JobClass = ScheduledJob
-        JobClassFactory = ScheduledJobFactory
+        JobClass = BaseJob
+        JobClassFactory = BaseJobFactory
 
         def test_schedule_time_utc(self):
             job = self.JobClass()
@@ -246,6 +359,76 @@ class BaseTestCases:
             scheduler = django_rq.get_scheduler(job.queue)
             entry = next(i for i in scheduler.get_jobs() if i.id == job.job_id)
             self.assertEqual(entry.result_ttl, 500)
+
+
+class TestJobArg(BaseTestCases.TestBaseJobArg):
+    JobArgClass = JobArg
+    JobArgClassFactory = JobArgFactory
+
+    def test_value(self):
+        arg = self.JobArgClassFactory(arg_name='str_val', str_val='something')
+        self.assertEqual(arg.value(), 'something')
+
+    def test__str__str_val(self):
+        arg = self.JobArgClassFactory(arg_name='str_val', str_val='something')
+        self.assertEqual('something', str(arg))
+
+    def test__str__int_val(self):
+        arg = self.JobArgClassFactory(arg_name='int_val', int_val=1)
+        self.assertEqual('1', str(arg))
+
+    def test__str__datetime_val(self):
+        time = datetime(2018, 1, 1)
+        arg = self.JobArgClassFactory(arg_name='datetime_val', datetime_val=time)
+        self.assertEqual('2018-01-01 00:00:00', str(arg))
+
+    def test__repr__str_val(self):
+        arg = self.JobArgClassFactory(arg_name='str_val', str_val='something')
+        self.assertEqual("'something'", repr(arg))
+
+    def test__repr__int_val(self):
+        arg = self.JobArgClassFactory(arg_name='int_val', int_val=1)
+        self.assertEqual('1', repr(arg))
+
+    def test__repr__datetime_val(self):
+        time = datetime(2018, 1, 1, 0, 0)
+        arg = self.JobArgClassFactory(arg_name='datetime_val', datetime_val=time)
+        self.assertEqual('datetime.datetime(2018, 1, 1, 0, 0)', repr(arg))
+
+
+class TestJobKwarg(BaseTestCases.TestBaseJobArg):
+    JobArgClass = JobKwarg
+    JobArgClassFactory = JobKwargFactory
+
+    def test_value(self):
+        kwarg = self.JobArgClassFactory(key='key', arg_name='str_val', str_val='value')
+        self.assertEqual(kwarg.value(), ('key', 'value'))
+
+    def test__str__str_val(self):
+        kwarg = self.JobArgClassFactory(key='key1', arg_name='str_val', str_val='something')
+        self.assertEqual("key=key1 value=something", str(kwarg))
+
+    def test__str__int_val(self):
+        kwarg = self.JobArgClassFactory(key='key1', arg_name='int_val', int_val=1)
+        self.assertEqual("key=key1 value=1", str(kwarg))
+
+    def test__str__datetime_val(self):
+        time = datetime(2018, 1, 1)
+        kwarg = self.JobArgClassFactory(key='key1', arg_name='datetime_val', datetime_val=time)
+        self.assertEqual("key=key1 value=2018-01-01 00:00:00", str(kwarg))
+
+    def test__repr__str_val(self):
+        kwarg = self.JobArgClassFactory(key='key', arg_name='str_val', str_val='something')
+        self.assertEqual("('key', 'something')", repr(kwarg))
+
+    def test__repr__int_val(self):
+        kwarg = self.JobArgClassFactory(key='key', arg_name='int_val', int_val=1)
+        self.assertEqual("('key', 1)", repr(kwarg))
+
+    def test__repr__datetime_val(self):
+        time = datetime(2018, 1, 1, 0, 0)
+        kwarg = self.JobArgClassFactory(key='key', arg_name='datetime_val', datetime_val=time)
+        self.assertEqual("('key', datetime.datetime(2018, 1, 1, 0, 0))", repr(kwarg))
 
 
 class TestScheduledJob(BaseTestCases.TestSchedulableJob):

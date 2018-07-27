@@ -26,17 +26,22 @@ class BaseJobArg(models.Model):
         ('int_val', _('int')),
         ('datetime_val', _('Datetime')),
     )
-    str_val = models.CharField(_('String Value'), blank=True, max_length=255)
-    int_val = models.IntegerField(_('Int Value'), blank=True, null=True)
-    datetime_val = models.DateTimeField(_('Datetime Value'), blank=True, null=True)
-    
     arg_name = models.CharField(
         _('Argument Type'), max_length=12, choices=ARG_NAME, default=ARG_NAME.str_val
     )
+    str_val = models.CharField(_('String Value'), blank=True, max_length=255)
+    int_val = models.IntegerField(_('Int Value'), blank=True, null=True)
+    datetime_val = models.DateTimeField(_('Datetime Value'), blank=True, null=True)
 
     content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
     object_id = models.PositiveIntegerField()
     content_object = GenericForeignKey()
+
+    def __repr__(self):
+        return repr(self.value())
+
+    def __str__(self):
+        return str(self.value())
 
     def clean(self):
         self.clean_one_value()
@@ -57,6 +62,9 @@ class BaseJobArg(models.Model):
                     _('There are multiple arg types with values'), code='invalid')
             })
 
+    def value(self):
+        return getattr(self, self.arg_name)
+
     class Meta:
         abstract = True
 
@@ -68,14 +76,21 @@ class JobArg(BaseJobArg):
 class JobKwarg(BaseJobArg):
     key = models.CharField(max_length=255)
 
+    def __str__(self):
+        key, value = self.value()
+        return 'key={} value={}'.format(key, value)
+
+    def value(self):
+        return self.key, super(JobKwarg, self).value()
+
 
 @python_2_unicode_compatible
 class BaseJob(TimeStampedModel):
 
     name = models.CharField(_('name'), max_length=128, unique=True)
     callable = models.CharField(_('callable'), max_length=2048)
-    callable_args = GenericRelation(JobArg)
-    callable_kwargs = GenericRelation(JobKwarg)
+    callable_args = GenericRelation(JobArg, related_query_name='args')
+    callable_kwargs = GenericRelation(JobKwarg, related_query_name='kwargs')
     enabled = models.BooleanField(_('enabled'), default=True)
     queue = models.CharField(_('queue'), max_length=16)
     job_id = models.CharField(
@@ -160,12 +175,12 @@ class BaseJob(TimeStampedModel):
         return True
 
     def parse_args(self):
-        args = self.callable_args.values().order_by('id')
-        return [arg[arg['arg_name']] for arg in args]
+        args = self.callable_args.all().order_by('id')
+        return [arg.value() for arg in args]
 
     def parse_kwargs(self):
-        kwargs = self.callable_kwargs.values().order_by('id')
-        return {kwarg['key']: kwarg[kwarg['arg_name']] for kwarg in kwargs}
+        kwargs = self.callable_kwargs.all().order_by('id')
+        return dict([kwarg.value() for kwarg in kwargs])
 
     def function_string(self):
         func = self.callable + "(\u200b{})"  # zero-width space allows textwrap
@@ -198,13 +213,15 @@ class ScheduledJob(ScheduledTimeMixin, BaseJob):
     def schedule(self):
         if self.is_schedulable() is False:
             return False
-        kwargs = {}
+        kwargs = self.parse_kwargs()
         if self.timeout:
             kwargs['timeout'] = self.timeout
         if self.result_ttl is not None:
             kwargs['job_result_ttl'] = self.result_ttl
         job = self.scheduler().enqueue_at(
-            self.schedule_time_utc(), self.callable_func(),
+            self.schedule_time_utc(),
+            self.callable_func(),
+            *self.parse_args(),
             **kwargs
         )
         self.job_id = job.id
