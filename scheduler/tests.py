@@ -231,6 +231,7 @@ class BaseTestCases:
 
         def test_schedule2(self):
             job = self.JobClass()
+            job.queue = list(settings.RQ_QUEUES)[0]
             job.enabled = False
             self.assertFalse(job.schedule())
 
@@ -250,16 +251,14 @@ class BaseTestCases:
             self.assertIsNone(job.job_id)
 
         def test_delete_and_unschedule(self):
-            job_id = 1
             job = self.JobClassFactory()
-            job.id = job_id
             job.save()
             is_scheduled = job.is_scheduled()
             self.assertIsNotNone(job.job_id)
             self.assertTrue(is_scheduled)
             scheduler = job.scheduler()
             job.delete()
-            is_scheduled = job_id in scheduler
+            is_scheduled = job.job_id in scheduler
             self.assertFalse(is_scheduled)
 
         def test_job_build(self):
@@ -305,7 +304,7 @@ class BaseTestCases:
 
         def test_function_string(self):
             job = self.JobClassFactory()
-            date = datetime(2018, 1, 1)
+            date = timezone.now()
             JobArgFactory(arg_name='str_val', str_val='one', content_object=job)
             JobArgFactory(arg_name='int_val', int_val=1, content_object=job)
             JobArgFactory(arg_name='datetime_val', datetime_val=date, content_object=job)
@@ -313,8 +312,8 @@ class BaseTestCases:
             JobKwargFactory(key='key2', arg_name='int_val', int_val=2, content_object=job)
             JobKwargFactory(key='key3', arg_name='datetime_val', datetime_val=date, content_object=job)
             self.assertEqual(job.function_string(),
-                             ("scheduler.tests.test_job(\u200b'one', 1, datetime.datetime(2018, 1, 1, 0, 0), " +
-                              "key1='one', key2=2, key3=datetime.datetime(2018, 1, 1, 0, 0))"))
+                             ("scheduler.tests.test_job(\u200b'one', 1, {date}, " +
+                              "key1='one', key2=2, key3={date})").format(date=repr(date)))
 
         def test_callable_result(self):
             job = self.JobClassFactory()
@@ -330,7 +329,7 @@ class BaseTestCases:
 
         def test_callable_args_and_kwagrgs(self):
             job = self.JobClassFactory(callable='scheduler.tests.test_args_kwargs')
-            date = datetime(2018, 1, 1)
+            date = timezone.now()
             JobArgFactory(arg_name='str_val', str_val='one', content_object=job)
             JobKwargFactory(key='key1', arg_name='int_val', int_val=2, content_object=job)
             JobKwargFactory(key='key2', arg_name='datetime_val', datetime_val=date, content_object=job)
@@ -338,7 +337,7 @@ class BaseTestCases:
             scheduler = django_rq.get_scheduler(job.queue)
             entry = next(i for i in scheduler.get_jobs() if i.id == job.job_id)
             self.assertEqual(entry.perform(),
-                             "test_args_kwargs('one', key1=2, key2=datetime.datetime(2018, 1, 1, 0, 0))")
+                             "test_args_kwargs('one', key1=2, key2={})".format(repr(date)))
 
     class TestSchedulableJob(TestBaseJob):
         # Currently ScheduledJob and RepeatableJob
@@ -378,9 +377,9 @@ class TestJobArg(BaseTestCases.TestBaseJobArg):
         self.assertEqual('1', str(arg))
 
     def test__str__datetime_val(self):
-        time = datetime(2018, 1, 1)
+        time = timezone.now()
         arg = self.JobArgClassFactory(arg_name='datetime_val', datetime_val=time)
-        self.assertEqual('2018-01-01 00:00:00', str(arg))
+        self.assertEqual(str(time), str(arg))
 
     def test__repr__str_val(self):
         arg = self.JobArgClassFactory(arg_name='str_val', str_val='something')
@@ -391,9 +390,9 @@ class TestJobArg(BaseTestCases.TestBaseJobArg):
         self.assertEqual('1', repr(arg))
 
     def test__repr__datetime_val(self):
-        time = datetime(2018, 1, 1, 0, 0)
+        time = timezone.now()
         arg = self.JobArgClassFactory(arg_name='datetime_val', datetime_val=time)
-        self.assertEqual('datetime.datetime(2018, 1, 1, 0, 0)', repr(arg))
+        self.assertEqual(repr(time), repr(arg))
 
 
 class TestJobKwarg(BaseTestCases.TestBaseJobArg):
@@ -413,9 +412,9 @@ class TestJobKwarg(BaseTestCases.TestBaseJobArg):
         self.assertEqual("key=key1 value=1", str(kwarg))
 
     def test__str__datetime_val(self):
-        time = datetime(2018, 1, 1)
+        time = timezone.now()
         kwarg = self.JobArgClassFactory(key='key1', arg_name='datetime_val', datetime_val=time)
-        self.assertEqual("key=key1 value=2018-01-01 00:00:00", str(kwarg))
+        self.assertEqual("key=key1 value={}".format(time), str(kwarg))
 
     def test__repr__str_val(self):
         kwarg = self.JobArgClassFactory(key='key', arg_name='str_val', str_val='something')
@@ -426,9 +425,9 @@ class TestJobKwarg(BaseTestCases.TestBaseJobArg):
         self.assertEqual("('key', 1)", repr(kwarg))
 
     def test__repr__datetime_val(self):
-        time = datetime(2018, 1, 1, 0, 0)
+        time = timezone.now()
         kwarg = self.JobArgClassFactory(key='key', arg_name='datetime_val', datetime_val=time)
-        self.assertEqual("('key', datetime.datetime(2018, 1, 1, 0, 0))", repr(kwarg))
+        self.assertEqual("('key', {})".format(repr(time)), repr(kwarg))
 
 
 class TestScheduledJob(BaseTestCases.TestSchedulableJob):

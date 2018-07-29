@@ -62,6 +62,14 @@ class BaseJobArg(models.Model):
                     _('There are multiple arg types with values'), code='invalid')
             })
 
+    def save(self, **kwargs):
+        super(BaseJobArg, self).save(**kwargs)
+        self.content_object.save()
+
+    def delete(self, **kwargs):
+        super(BaseJobArg, self).delete(**kwargs)
+        self.content_object.save()
+
     def value(self):
         return getattr(self, self.arg_name)
 
@@ -151,14 +159,19 @@ class BaseJob(TimeStampedModel):
     is_scheduled.boolean = True
 
     def save(self, **kwargs):
-        self.unschedule()
-        if self.enabled:
-            self.schedule()
+        self.schedule()
         super(BaseJob, self).save(**kwargs)
+        # print('save', self.job_id, self.callable_args.all().count(), self.callable_kwargs.all().count())
 
     def delete(self, **kwargs):
         self.unschedule()
         super(BaseJob, self).delete(**kwargs)
+
+    def schedule(self):
+        # print('schedule', self.job_id, self.callable_args.all().count(), self.callable_kwargs.all().count())
+        self.unschedule()
+        if self.is_schedulable() is False:
+            return False
 
     def scheduler(self):
         return django_rq.get_scheduler(self.queue)
@@ -211,7 +224,8 @@ class ScheduledJob(ScheduledTimeMixin, BaseJob):
     repeat = None
 
     def schedule(self):
-        if self.is_schedulable() is False:
+        result = super(ScheduledJob, self).schedule()
+        if result is False:
             return False
         kwargs = self.parse_kwargs()
         if self.timeout:
@@ -257,7 +271,8 @@ class RepeatableJob(ScheduledTimeMixin, BaseJob):
         return timedelta(**kwargs).total_seconds()
 
     def schedule(self):
-        if self.is_schedulable() is False:
+        result = super(RepeatableJob, self).schedule()
+        if result is False:
             return False
         kwargs = {
             'args': self.parse_args(),
@@ -305,7 +320,8 @@ class CronJob(BaseJob):
             })
 
     def schedule(self):
-        if self.is_schedulable() is False:
+        result = super(CronJob, self).schedule()
+        if result is False:
             return False
         kwargs = {
             'args': self.parse_args(),
