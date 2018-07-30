@@ -12,28 +12,6 @@ from scheduler.models import CronJob, RepeatableJob, ScheduledJob,\
 QUEUES = [(key, key) for key in settings.RQ_QUEUES.keys()]
 
 
-class QueueMixin(object):
-    actions = ['delete_model']
-
-    def get_actions(self, request):
-        actions = super(QueueMixin, self).get_actions(request)
-        del actions['delete_selected']
-        return actions
-
-    def get_form(self, request, obj=None, **kwargs):
-        queue_field = self.model._meta.get_field('queue')
-        queue_field.choices = QUEUES
-        return super(QueueMixin, self).get_form(request, obj, **kwargs)
-
-    def delete_model(self, request, obj):
-        if hasattr(obj, 'all'):
-            for o in obj.all():
-                o.delete()
-        else:
-            obj.delete()
-    delete_model.short_description = _("Delete selected %(verbose_name_plural)s")
-
-
 class JobArgInline(GenericStackedInline):
     model = JobArg
     extra = 0
@@ -59,14 +37,49 @@ class JobKwargInline(GenericStackedInline):
         js = ('scheduler/js/base.js',)
 
 
+class QueueMixin(object):
+    actions = ['delete_model', 'disable_selected', 'enable_selected', ]
+    inlines = [JobArgInline, JobKwargInline]
+    list_filter = ('enabled', 'callable')
+    readonly_fields = ('job_id', )
+    search_fields = ('name', 'callable', )
+
+    def get_actions(self, request):
+        actions = super(QueueMixin, self).get_actions(request)
+        del actions['delete_selected']
+        return actions
+
+    def get_form(self, request, obj=None, **kwargs):
+        queue_field = self.model._meta.get_field('queue')
+        queue_field.choices = QUEUES
+        return super(QueueMixin, self).get_form(request, obj, **kwargs)
+
+    def delete_model(self, request, obj):
+        if hasattr(obj, 'all'):
+            for o in obj.all():
+                o.delete()
+        else:
+            obj.delete()
+    delete_model.short_description = _("Delete selected %(verbose_name_plural)s")
+
+    def disable_selected(self, request, queryset):
+        for obj in queryset.all():
+            obj.enabled = False
+            obj.save()
+    disable_selected.short_description = _("Disable selected %(verbose_name_plural)s")
+
+    def enable_selected(self, request, queryset):
+        for obj in queryset.all():
+            obj.enabled = True
+            obj.save()
+    enable_selected.short_description = _("Enable selected %(verbose_name_plural)s")
+
+
 @admin.register(ScheduledJob)
 class ScheduledJobAdmin(QueueMixin, admin.ModelAdmin):
     list_display = (
-        'name', 'job_id', ScheduledJob.function_string, 'is_scheduled', 'scheduled_time', 'enabled')
-    list_filter = ('enabled', )
-    list_editable = ('enabled', )
+        'enabled', 'name', 'job_id', ScheduledJob.function_string, 'is_scheduled', 'scheduled_time', )
 
-    readonly_fields = ('job_id', )
     fieldsets = (
         (None, {
             'fields': ('name', 'callable', 'enabled', ),
@@ -82,18 +95,14 @@ class ScheduledJobAdmin(QueueMixin, admin.ModelAdmin):
             ),
         }),
     )
-    inlines = [JobArgInline, JobKwargInline]
 
 
 @admin.register(RepeatableJob)
 class RepeatableJobAdmin(QueueMixin, admin.ModelAdmin):
     list_display = (
-        'name', 'job_id', RepeatableJob.function_string, 'is_scheduled', 'scheduled_time', 'interval_display',
-        'enabled')
-    list_filter = ('enabled', )
-    list_editable = ('enabled', )
+        'enabled', 'name', 'job_id', RepeatableJob.function_string, 'is_scheduled', 'scheduled_time',
+        'interval_display')
 
-    readonly_fields = ('job_id', )
     fieldsets = (
         (None, {
             'fields': ('name', 'callable', 'enabled', ),
@@ -111,17 +120,12 @@ class RepeatableJobAdmin(QueueMixin, admin.ModelAdmin):
             ),
         }),
     )
-    inlines = [JobArgInline, JobKwargInline]
-
 
 @admin.register(CronJob)
 class CronJobAdmin(QueueMixin, admin.ModelAdmin):
     list_display = (
-        'name', 'job_id', CronJob.function_string, 'is_scheduled', 'cron_string', 'enabled')
-    list_filter = ('enabled', )
-    list_editable = ('enabled', )
+        'enabled', 'name', 'job_id', CronJob.function_string, 'is_scheduled', 'cron_string')
 
-    readonly_fields = ('job_id', )
     fieldsets = (
         (None, {
             'fields': ('name', 'callable', 'enabled', ),
@@ -137,5 +141,3 @@ class CronJobAdmin(QueueMixin, admin.ModelAdmin):
             ),
         }),
     )
-    inlines = [JobArgInline, JobKwargInline]
-

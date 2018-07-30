@@ -161,14 +161,12 @@ class BaseJob(TimeStampedModel):
     def save(self, **kwargs):
         self.schedule()
         super(BaseJob, self).save(**kwargs)
-        # print('save', self.job_id, self.callable_args.all().count(), self.callable_kwargs.all().count())
 
     def delete(self, **kwargs):
         self.unschedule()
         super(BaseJob, self).delete(**kwargs)
 
     def schedule(self):
-        # print('schedule', self.job_id, self.callable_args.all().count(), self.callable_kwargs.all().count())
         self.unschedule()
         if self.is_schedulable() is False:
             return False
