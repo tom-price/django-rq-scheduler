@@ -39,6 +39,7 @@ class JobKwargInline(GenericStackedInline):
 
 class QueueMixin(object):
     actions = ['delete_model', 'disable_selected', 'enable_selected', ]
+    list_display_links = ('name', )
     inlines = [JobArgInline, JobKwargInline]
     list_filter = ('enabled', 'callable')
     readonly_fields = ('job_id', )
