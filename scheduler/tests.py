@@ -233,6 +233,7 @@ class BaseTestCases:
             job = self.JobClass()
             job.queue = list(settings.RQ_QUEUES)[0]
             job.enabled = False
+            job.scheduled_time = timezone.now() + timedelta(minutes=1)
             self.assertFalse(job.schedule())
 
         def test_unschedule(self):
@@ -353,6 +354,10 @@ class BaseTestCases:
             expected = scheduled_time.astimezone(utc).isoformat()
             self.assertEqual(expected, job.schedule_time_utc().isoformat())
 
+        def test_unschedulable_old_job(self):
+            job = self.JobClassFactory(scheduled_time=timezone.now() - timedelta(hours=1))
+            self.assertFalse(job.is_scheduled())
+
         def test_result_ttl_passthroug(self):
             job = self.JobClassFactory(result_ttl=500)
             scheduler = django_rq.get_scheduler(job.queue)
@@ -470,6 +475,27 @@ class TestRepeatableJob(BaseTestCases.TestSchedulableJob):
         scheduler = django_rq.get_scheduler(job.queue)
         entry = next(i for i in scheduler.get_jobs() if i.id == job.job_id)
         self.assertEqual(entry.meta['repeat'], 10)
+
+    def test_repeat_old_job_exhausted(self):
+        base_time = timezone.now()
+        job = self.JobClassFactory(scheduled_time=base_time - timedelta(hours=10),
+                                   repeat=10)
+        self.assertEqual(job.is_scheduled(), False)
+
+    def test_repeat_old_job_last_iter(self):
+        base_time = timezone.now()
+        job = self.JobClassFactory(scheduled_time=base_time - timedelta(hours=9, minutes=30),
+                                   repeat=10)
+        self.assertEqual(job.repeat, 0)
+        self.assertEqual(job.is_scheduled(), True)
+
+    def test_repeat_old_job_remaining(self):
+        base_time = timezone.now()
+        job = self.JobClassFactory(scheduled_time=base_time - timedelta(minutes=30),
+                                   repeat=5)
+        self.assertEqual(job.repeat, 4)
+        self.assertEqual(job.scheduled_time, base_time + timedelta(minutes=30))
+        self.assertEqual(job.is_scheduled(), True)
 
 
 class TestCronJob(BaseTestCases.TestBaseJob):

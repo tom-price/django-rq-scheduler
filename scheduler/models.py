@@ -11,6 +11,7 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.templatetags.tz import utc
 from django.utils.encoding import python_2_unicode_compatible
+from django.utils.timezone import now
 from django.utils.translation import ugettext_lazy as _
 
 import django_rq
@@ -223,6 +224,8 @@ class ScheduledJob(ScheduledTimeMixin, BaseJob):
 
     def schedule(self):
         result = super(ScheduledJob, self).schedule()
+        if self.scheduled_time < now():
+            return False
         if result is False:
             return False
         kwargs = self.parse_kwargs()
@@ -268,8 +271,16 @@ class RepeatableJob(ScheduledTimeMixin, BaseJob):
         }
         return timedelta(**kwargs).total_seconds()
 
+    def prevent_duplicate_runs(self):
+        while self.scheduled_time < now() and self.repeat and self.repeat > 0:
+            self.scheduled_time += timedelta(seconds=self.interval_seconds())
+            self.repeat -= 1
+
     def schedule(self):
         result = super(RepeatableJob, self).schedule()
+        self.prevent_duplicate_runs()
+        if self.scheduled_time < now():
+            return False
         if result is False:
             return False
         kwargs = {
@@ -340,4 +351,3 @@ class CronJob(BaseJob):
         verbose_name = _('Cron Job')
         verbose_name_plural = _('Cron Jobs')
         ordering = ('name', )
-

@@ -122,6 +122,7 @@ class RepeatableJobAdmin(QueueMixin, admin.ModelAdmin):
         }),
     )
 
+
 @admin.register(CronJob)
 class CronJobAdmin(QueueMixin, admin.ModelAdmin):
     list_display = (
