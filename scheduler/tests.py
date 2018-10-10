@@ -233,6 +233,12 @@ class TestRepeatableJob(TestScheduledJob):
         job.interval_unit = 'minutes'
         self.assertEqual(900.0, job.interval_seconds())
 
+    def test_interval_seconds_seconds(self):
+        job = RepeatableJob()
+        job.interval = 15
+        job.interval_unit = 'seconds'
+        self.assertEqual(15.0, job.interval_seconds())
+
     def test_repeatable_schedule(self):
         job = self.JobClassFactory()
         job.id = 1
