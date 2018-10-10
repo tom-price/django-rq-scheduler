@@ -147,6 +147,7 @@ class ScheduledJob(ScheduledTimeMixin, BaseJob):
 class RepeatableJob(ScheduledTimeMixin, BaseJob):
 
     UNITS = Choices(
+        ('seconds', _('seconds')),
         ('minutes', _('minutes')),
         ('hours', _('hours')),
         ('days', _('days')),
