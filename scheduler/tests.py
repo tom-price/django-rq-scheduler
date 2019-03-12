@@ -278,6 +278,7 @@ class TestRepeatableJob(BaseTestCases.TestSchedulableJob):
         job.queue = list(settings.RQ_QUEUES)[0]
         job.callable = 'scheduler.tests.test_job'
         job.interval = 1
+        job.result_ttl = -1
         assert job.clean() is None
 
     def test_clean_seconds(self):
@@ -285,6 +286,7 @@ class TestRepeatableJob(BaseTestCases.TestSchedulableJob):
         job.queue = list(settings.RQ_QUEUES)[0]
         job.callable = 'scheduler.tests.test_job'
         job.interval = 60
+        job.result_ttl = -1
         job.interval_unit = 'seconds'
         assert job.clean() is None
 
@@ -293,6 +295,7 @@ class TestRepeatableJob(BaseTestCases.TestSchedulableJob):
         job.queue = list(settings.RQ_QUEUES)[0]
         job.callable = 'scheduler.tests.test_job'
         job.interval = 30
+        job.result_ttl = -1
         job.interval_unit = 'seconds'
         with self.assertRaises(ValidationError):
             job.clean_interval_unit()
@@ -305,6 +308,25 @@ class TestRepeatableJob(BaseTestCases.TestSchedulableJob):
         job.interval_unit = 'seconds'
         with self.assertRaises(ValidationError):
             job.clean_interval_unit()
+
+    def test_clean_short_result_ttl(self):
+        job = self.JobClass()
+        job.queue = list(settings.RQ_QUEUES)[0]
+        job.callable = 'scheduler.tests.test_job'
+        job.interval = 1
+        job.result_ttl = 3599
+        job.interval_unit = 'hours'
+        with self.assertRaises(ValidationError):
+            job.clean_result_ttl()
+
+    def test_clean_indefinite_result_ttl(self):
+        job = self.JobClass()
+        job.queue = list(settings.RQ_QUEUES)[0]
+        job.callable = 'scheduler.tests.test_job'
+        job.interval = 1
+        job.result_ttl = -1
+        job.interval_unit = 'hours'
+        job.clean_result_ttl()
 
     def test_interval_seconds_weeks(self):
         job = RepeatableJobFactory(interval=2, interval_unit='weeks')

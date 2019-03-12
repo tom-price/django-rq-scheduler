@@ -172,16 +172,31 @@ class RepeatableJob(ScheduledTimeMixin, BaseJob):
     def clean(self):
         super(RepeatableJob, self).clean()
         self.clean_interval_unit()
+        self.clean_result_ttl()
 
     def clean_interval_unit(self):
         if RQ_SCHEDULER_INTERVAL > self.interval_seconds():
-            raise ValidationError({
-                'interval_unit': ValidationError(
-                    _("Job interval is set lower than {} queue's interval.".format(self.queue)), code='invalid')
-            })
+            raise ValidationError(
+                _("Job interval is set lower than %(queue)r queue's interval."),
+                code='invalid',
+                params={'queue': self.queue})
         if self.interval_seconds() % RQ_SCHEDULER_INTERVAL:
-            raise ValidationError(_("Job interval is not a multiple of rq_scheduler's interval frequency: {}s".format(
-                        RQ_SCHEDULER_INTERVAL)), code='invalid')
+            raise ValidationError(
+                _("Job interval is not a multiple of rq_scheduler's interval frequency: %(interval)ss"),
+                code='invalid',
+                params={'interval': RQ_SCHEDULER_INTERVAL})
+
+    def clean_result_ttl(self):
+        """
+        Throws an error if there are repeats left to run and the result_ttl won't last until the next scheduled time.
+        :return:
+        """
+        if self.result_ttl != -1 and self.result_ttl < self.interval_seconds() and self.repeat:
+            raise ValidationError(
+                _("Job result_ttl must be either indefinite (-1) or "
+                  "longer than the interval, %(interval)s seconds, to ensure rescheduling."),
+                code='invalid',
+                params={'interval': self.interval_seconds()},)
 
     def interval_display(self):
         return '{} {}'.format(self.interval, self.get_interval_unit_display())
