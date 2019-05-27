@@ -30,6 +30,7 @@ class QueueMixin(object):
         else:
             obj.delete()
     delete_model.short_description = _("Delete selected %(verbose_name_plural)s")
+    delete_model.allowed_permissions = ('delete',)
 
 
 @admin.register(ScheduledJob)
