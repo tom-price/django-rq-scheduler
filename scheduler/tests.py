@@ -2,58 +2,57 @@
 from __future__ import unicode_literals
 from datetime import datetime, timedelta
 
-from django.conf import settings
-from django.core.exceptions import ValidationError
-from django.test import TestCase
 
 import factory
 import pytz
+from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.test import TestCase
+from django.utils import timezone
 from django_rq import job
 from scheduler.models import CronJob, RepeatableJob, ScheduledJob
 
 
-class ScheduledJobFactory(factory.Factory):
 
-    name = factory.Sequence(lambda n: 'Addition {}'.format(n))
+class BaseJobFactory(factory.DjangoModelFactory):
+    name = factory.Sequence(lambda n: 'Scheduled Job %d' % n)
     job_id = None
-    queue = 'default'
+    queue = list(settings.RQ_QUEUES.keys())[0]
     callable = 'scheduler.tests.test_job'
     enabled = True
+    timeout = None
+
+    class Meta:
+        django_get_or_create = ('name',)
+        abstract = True
+
+
+class ScheduledJobFactory(BaseJobFactory):
+    result_ttl = None
 
     @factory.lazy_attribute
     def scheduled_time(self):
-        return datetime.now() + timedelta(days=1)
+        return timezone.now() + timedelta(days=1)
 
     class Meta:
         model = ScheduledJob
 
 
-class RepeatableJobFactory(factory.Factory):
-
-    name = factory.Sequence(lambda n: 'Addition {}'.format(n))
-    job_id = None
-    queue = 'default'
-    callable = 'scheduler.tests.test_job'
-    enabled = True
+class RepeatableJobFactory(BaseJobFactory):
+    result_ttl = None
     interval = 1
     interval_unit = 'hours'
     repeat = None
 
     @factory.lazy_attribute
     def scheduled_time(self):
-        return datetime.now() + timedelta(minutes=1)
+        return timezone.now() + timedelta(minutes=1)
 
     class Meta:
         model = RepeatableJob
 
 
-class CronJobFactory(factory.Factory):
-
-    name = factory.Sequence(lambda n: 'Addition {}'.format(n))
-    job_id = None
-    queue = 'default'
-    callable = 'scheduler.tests.test_job'
-    enabled = True
+class CronJobFactory(BaseJobFactory):
     cron_string = "0 0 * * *"
     repeat = None
 
