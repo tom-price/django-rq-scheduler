@@ -214,7 +214,7 @@ class CronJob(BaseJob):
 
     cron_string = models.CharField(
         _('cron string'), max_length=64,
-        help_text=_('Define the schedule in a crontab like syntax.')
+        help_text=_('Define the schedule in a crontab like syntax. Times are in UTC.')
     )
     repeat = models.PositiveIntegerField(_('repeat'), blank=True, null=True)
 
