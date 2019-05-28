@@ -1,20 +1,19 @@
 from __future__ import unicode_literals
+
 import importlib
 from datetime import timedelta
 
 import croniter
-
+import django_rq
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.templatetags.tz import utc
 from django.utils.encoding import python_2_unicode_compatible
+from django.utils.timezone import now
 from django.utils.translation import ugettext_lazy as _
-
-import django_rq
 from model_utils import Choices
 from model_utils.models import TimeStampedModel
-
 
 RQ_SCHEDULER_INTERVAL = getattr(settings, "DJANGO_RQ_SCHEDULER_INTERVAL", 60)
 
@@ -28,6 +27,7 @@ class BaseJob(TimeStampedModel):
     queue = models.CharField(_('queue'), max_length=16)
     job_id = models.CharField(
         _('job id'), max_length=128, editable=False, blank=True, null=True)
+    repeat = models.PositiveIntegerField(_('repeat'), blank=True, null=True)
     timeout = models.IntegerField(
         _('timeout'), blank=True, null=True,
         help_text=_(
@@ -62,7 +62,7 @@ class BaseJob(TimeStampedModel):
     def clean_callable(self):
         try:
             self.callable_func()
-        except:
+        except TypeError as e:
             raise ValidationError({
                 'callable': ValidationError(
                     _('Invalid callable, must be importable'), code='invalid')
@@ -83,9 +83,7 @@ class BaseJob(TimeStampedModel):
     is_scheduled.boolean = True
 
     def save(self, **kwargs):
-        self.unschedule()
-        if self.enabled:
-            self.schedule()
+        self.schedule()
         super(BaseJob, self).save(**kwargs)
 
     def delete(self, **kwargs):
@@ -101,19 +99,9 @@ class BaseJob(TimeStampedModel):
         return self.enabled
 
     def schedule(self):
+        self.unschedule()
         if self.is_schedulable() is False:
             return False
-        kwargs = {}
-        if self.timeout:
-            kwargs['timeout'] = self.timeout
-        if self.result_ttl is not None:
-            kwargs['result_ttl'] = self.result_ttl
-        job = self.scheduler().enqueue_at(
-            self.schedule_time_utc(), self.callable_func(),
-            **kwargs
-        )
-        self.job_id = job.id
-        return True
 
     def unschedule(self):
         if self.is_scheduled():
@@ -140,6 +128,26 @@ class ScheduledTimeMixin(models.Model):
 
 
 class ScheduledJob(ScheduledTimeMixin, BaseJob):
+    repeat = None
+
+    def schedule(self):
+        result = super(ScheduledJob, self).schedule()
+        if self.scheduled_time < now():
+            return False
+        if result is False:
+            return False
+        kwargs = dict()
+        if self.timeout:
+            kwargs['timeout'] = self.timeout
+        if self.result_ttl is not None:
+            kwargs['job_result_ttl'] = self.result_ttl
+        job = self.scheduler().enqueue_at(
+            self.schedule_time_utc(),
+            self.callable_func(),
+            **kwargs
+        )
+        self.job_id = job.id
+        return True
 
     class Meta:
         verbose_name = _('Scheduled Job')
@@ -161,7 +169,6 @@ class RepeatableJob(ScheduledTimeMixin, BaseJob):
     interval_unit = models.CharField(
         _('interval unit'), max_length=12, choices=UNITS, default=UNITS.hours
     )
-    repeat = models.PositiveIntegerField(_('repeat'), blank=True, null=True)
 
     def clean(self):
         super(RepeatableJob, self).clean()
@@ -186,20 +193,36 @@ class RepeatableJob(ScheduledTimeMixin, BaseJob):
         }
         return timedelta(**kwargs).total_seconds()
 
+    def _prevent_duplicate_runs(self):
+        """
+        Counts the number of repeats lapsed between scheduled time and now
+        and decrements that amount from the repeats remaining and updates the scheduled time to the next repeat.
+        :return:
+        """
+        while self.scheduled_time < now() and self.repeat and self.repeat > 0:
+            self.scheduled_time += timedelta(seconds=self.interval_seconds())
+            self.repeat -= 1
+
     def schedule(self):
-        if self.is_schedulable() is False:
+        result = super(RepeatableJob, self).schedule()
+        self._prevent_duplicate_runs()
+        if self.scheduled_time < now():
             return False
-        kwargs = {
-            'scheduled_time': self.schedule_time_utc(),
-            'func': self.callable_func(),
-            'interval': self.interval_seconds(),
-            'repeat': self.repeat
-        }
+        if result is False:
+            return False
+        kwargs = dict(
+            interval=self.interval_seconds(),
+            repeat=self.repeat
+        )
         if self.timeout:
             kwargs['timeout'] = self.timeout
         if self.result_ttl is not None:
             kwargs['result_ttl'] = self.result_ttl
-        job = self.scheduler().schedule(**kwargs)
+        job = self.scheduler().schedule(
+            self.schedule_time_utc(),
+            self.callable_func(),
+            **kwargs
+        )
         self.job_id = job.id
         return True
 
@@ -216,7 +239,6 @@ class CronJob(BaseJob):
         _('cron string'), max_length=64,
         help_text=_('Define the schedule in a crontab like syntax. Times are in UTC.')
     )
-    repeat = models.PositiveIntegerField(_('repeat'), blank=True, null=True)
 
     def clean(self):
         super(CronJob, self).clean()
@@ -232,16 +254,19 @@ class CronJob(BaseJob):
             })
 
     def schedule(self):
-        if self.is_schedulable() is False:
+        result = super(CronJob, self).schedule()
+        if result is False:
             return False
-        kwargs = {
-            'func': self.callable_func(),
-            'cron_string': self.cron_string,
-            'repeat': self.repeat
-        }
+        kwargs = dict(
+            repeat=self.repeat
+        )
         if self.timeout:
             kwargs['timeout'] = self.timeout
-        job = self.scheduler().cron(**kwargs)
+        job = self.scheduler().cron(
+            self.cron_string,
+            self.callable_func(),
+            **kwargs
+        )
         self.job_id = job.id
         return True
 
