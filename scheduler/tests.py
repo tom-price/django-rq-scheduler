@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 import django_rq
 import factory
+import fakeredis
 import pytz
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -13,6 +14,8 @@ from django.utils import timezone
 from django_rq import job
 
 from scheduler.models import BaseJob, CronJob, RepeatableJob, ScheduledJob
+
+server = fakeredis.FakeServer()
 
 
 class BaseJobFactory(factory.DjangoModelFactory):
@@ -72,8 +75,8 @@ test_non_callable = 'I am a teapot'
 class BaseTestCases:
 
     class TestBaseJob(TestCase):
-        # def setUp(self):
-        #     django_rq.queues.get_redis_connection = lambda _, strict: FakeStrictRedis()
+        def setUp(self):
+            django_rq.queues.get_redis_connection = lambda _, strict: fakeredis.FakeRedis(server=server)
 
         JobClass = BaseJob
         JobClassFactory = BaseJobFactory

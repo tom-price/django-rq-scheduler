@@ -28,6 +28,7 @@ def get_version(root_path):
 tests_require = [
     'factory_boy>=2.6.1',
     'psycopg2>=2.6.1',
+    'fakeredis>=1',
 ]
 
 
