@@ -8,8 +8,8 @@ Currently, when you pip install Django RQ Scheduler the following packages are a
 
 * django >= 1.9
 * django-model-utils >= 2.4
-* django-rq >= 0.9.3 (Django RQ requires RQ >= 0.5.5)
-* rq-scheduler >= 0.6.0
+* django-rq >= 2.0 (Django RQ requires RQ >= 1.0 due to changes in redis >= 3.0.0)
+* rq-scheduler >= 0.9.0
 * pytz >= 2015.7
 * croniter >= 0.3.24
 
