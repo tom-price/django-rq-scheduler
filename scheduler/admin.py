@@ -2,16 +2,17 @@ from __future__ import unicode_literals
 
 from django.conf import settings
 from django.contrib import admin, messages
+from django.templatetags.tz import utc
+from django.utils.timezone import now
 from django.utils.translation import ugettext_lazy as _
 
 from scheduler.models import CronJob, RepeatableJob, ScheduledJob
-
 
 QUEUES = [(key, key) for key in settings.RQ_QUEUES.keys()]
 
 
 class JobAdmin(admin.ModelAdmin):
-    actions = ['delete_model', 'disable_selected', 'enable_selected']
+    actions = ['delete_model', 'disable_selected', 'enable_selected', 'run_job_now']
     list_filter = ('enabled', )
     list_display = ('enabled', 'name', 'job_id', 'is_scheduled',)
     list_display_links = ('name',)
@@ -80,6 +81,18 @@ class JobAdmin(admin.ModelAdmin):
         self.message_user(request, "%s successfully enabled." % message_bit, level=level)
     enable_selected.short_description = _("Enable selected %(verbose_name_plural)s")
     enable_selected.allowed_permissions = ('change',)
+
+    def run_job_now(self, request, queryset):
+        job_names = []
+        for obj in queryset:
+            kwargs = dict(timeout=obj.timeout)
+            if hasattr(obj, 'result_ttl') and obj.result_ttl is not None:
+                kwargs['result_ttl'] = obj.result_ttl
+            obj.scheduler().enqueue_at(utc(now()), obj.callable_func(), **kwargs)
+            job_names.append(obj.name)
+        self.message_user(request, "The following jobs have been run: %s" % ', '.join(job_names))
+    run_job_now.short_description = "Run now"
+    run_job_now.allowed_permissions = ('change',)
 
 
 @admin.register(ScheduledJob)
