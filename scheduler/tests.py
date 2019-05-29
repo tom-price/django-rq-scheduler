@@ -93,7 +93,7 @@ class BaseTestCases:
         def test_clean_callable(self):
             job = self.JobClass()
             job.callable = 'scheduler.tests.test_job'
-            assert job.clean_callable() is None
+            self.assertIsNone(job.clean_callable())
 
         def test_clean_callable_invalid(self):
             job = self.JobClass()
@@ -114,7 +114,14 @@ class BaseTestCases:
             with self.assertRaises(ValidationError):
                 job.clean()
 
-        def test_clean_invalid(self):
+        # next 2 check the above are included in job.clean() function
+        def test_clean(self):
+            job = self.JobClass()
+            job.queue = list(settings.RQ_QUEUES)[0]
+            job.callable = 'scheduler.tests.test_job'
+            self.assertIsNone(job.clean())
+
+        def test_clean_invalid_callable(self):
             job = self.JobClass()
             job.queue = list(settings.RQ_QUEUES)[0]
             job.callable = 'scheduler.tests.test_non_callable'
@@ -135,28 +142,22 @@ class BaseTestCases:
 
         def test_is_schedulable_disabled(self):
             job = self.JobClass()
-            job.id = 1
             job.enabled = False
             self.assertFalse(job.is_schedulable())
 
         def test_is_schedulable_enabled(self):
             job = self.JobClass()
-            job.id = 1
             job.enabled = True
             self.assertTrue(job.is_schedulable())
 
         def test_schedule(self):
             job = self.JobClassFactory()
-            job.id = 1
-            successful = job.schedule()
-            self.assertTrue(successful)
+            self.assertTrue(job.is_scheduled())
             self.assertIsNotNone(job.job_id)
 
         def test_unschedulable(self):
-            job = self.JobClassFactory()
-            job.enabled = False
-            successful = job.schedule()
-            self.assertFalse(successful)
+            job = self.JobClassFactory(enabled=False)
+            self.assertFalse(job.is_scheduled())
             self.assertIsNone(job.job_id)
 
         def test_unschedule(self):
@@ -175,19 +176,14 @@ class BaseTestCases:
             self.assertIsNotNone(job.job_id)
 
         def test_save_disabled(self):
-            job = self.JobClassFactory()
-            job.save()
-            job.enabled = False
+            job = self.JobClassFactory(enabled=False)
             job.save()
             self.assertIsNone(job.job_id)
 
         def test_save_and_schedule(self):
             job = self.JobClassFactory()
-            job.id = 1
-            job.save()
-            is_scheduled = job.is_scheduled()
             self.assertIsNotNone(job.job_id)
-            self.assertTrue(is_scheduled)
+            self.assertTrue(job.is_scheduled())
 
         def test_schedule2(self):
             job = self.JobClass()
@@ -198,10 +194,8 @@ class BaseTestCases:
 
         def test_delete_and_unschedule(self):
             job = self.JobClassFactory()
-            job.save()
-            is_scheduled = job.is_scheduled()
             self.assertIsNotNone(job.job_id)
-            self.assertTrue(is_scheduled)
+            self.assertTrue(job.is_scheduled())
             job.delete()
             self.assertFalse(job.is_scheduled())
 
@@ -218,13 +212,13 @@ class BaseTestCases:
             job = self.JobClassFactory(name=name)
             self.assertEqual(str(job), name)
 
-        def test_callable_passthroug(self):
+        def test_callable_passthrough(self):
             job = self.JobClassFactory()
             scheduler = django_rq.get_scheduler(job.queue)
             entry = next(i for i in scheduler.get_jobs() if i.id == job.job_id)
             self.assertEqual(entry.func, test_job)
 
-        def test_timeout_passthroug(self):
+        def test_timeout_passthrough(self):
             job = self.JobClassFactory(timeout=500)
             scheduler = django_rq.get_scheduler(job.queue)
             entry = next(i for i in scheduler.get_jobs() if i.id == job.job_id)
@@ -254,7 +248,7 @@ class BaseTestCases:
             job = self.JobClassFactory(scheduled_time=timezone.now() - timedelta(hours=1))
             self.assertFalse(job.is_scheduled())
 
-        def test_result_ttl_passthroug(self):
+        def test_result_ttl_passthrough(self):
             job = self.JobClassFactory(result_ttl=500)
             scheduler = django_rq.get_scheduler(job.queue)
             entry = next(i for i in scheduler.get_jobs() if i.id == job.job_id)
@@ -310,48 +304,24 @@ class TestRepeatableJob(BaseTestCases.TestSchedulableJob):
             job.clean_interval_unit()
 
     def test_interval_seconds_weeks(self):
-        job = RepeatableJob()
-        job.interval = 2
-        job.interval_unit = 'weeks'
+        job = RepeatableJobFactory(interval=2, interval_unit='weeks')
         self.assertEqual(1209600.0, job.interval_seconds())
 
     def test_interval_seconds_days(self):
-        job = RepeatableJob()
-        job.interval = 2
-        job.interval_unit = 'days'
+        job = RepeatableJobFactory(interval=2, interval_unit='days')
         self.assertEqual(172800.0, job.interval_seconds())
 
     def test_interval_seconds_hours(self):
-        job = RepeatableJob()
-        job.interval = 2
-        job.interval_unit = 'hours'
+        job = RepeatableJobFactory(interval=2, interval_unit='hours')
         self.assertEqual(7200.0, job.interval_seconds())
 
     def test_interval_seconds_minutes(self):
-        job = RepeatableJob()
-        job.interval = 15
-        job.interval_unit = 'minutes'
+        job = RepeatableJobFactory(interval=15, interval_unit='minutes')
         self.assertEqual(900.0, job.interval_seconds())
 
     def test_interval_seconds_seconds(self):
-        job = RepeatableJob()
-        job.interval = 15
-        job.interval_unit = 'seconds'
+        job = RepeatableJob(interval=15, interval_unit='seconds')
         self.assertEqual(15.0, job.interval_seconds())
-
-    def test_repeatable_schedule(self):
-        job = self.JobClassFactory()
-        job.id = 1
-        successful = job.schedule()
-        self.assertTrue(successful)
-        self.assertIsNotNone(job.job_id)
-
-    def test_repeatable_unschedulable(self):
-        job = self.JobClassFactory()
-        job.enabled = False
-        successful = job.schedule()
-        self.assertFalse(successful)
-        self.assertIsNone(job.job_id)
 
     def test_interval_display(self):
         job = RepeatableJobFactory(interval=15, interval_unit='minutes')
@@ -371,21 +341,18 @@ class TestRepeatableJob(BaseTestCases.TestSchedulableJob):
 
     def test_repeat_old_job_exhausted(self):
         base_time = timezone.now()
-        job = self.JobClassFactory(scheduled_time=base_time - timedelta(hours=10),
-                                   repeat=10)
+        job = self.JobClassFactory(scheduled_time=base_time - timedelta(hours=10),  repeat=10)
         self.assertEqual(job.is_scheduled(), False)
 
     def test_repeat_old_job_last_iter(self):
         base_time = timezone.now()
-        job = self.JobClassFactory(scheduled_time=base_time - timedelta(hours=9, minutes=30),
-                                   repeat=10)
+        job = self.JobClassFactory(scheduled_time=base_time - timedelta(hours=9, minutes=30), repeat=10)
         self.assertEqual(job.repeat, 0)
         self.assertEqual(job.is_scheduled(), True)
 
     def test_repeat_old_job_remaining(self):
         base_time = timezone.now()
-        job = self.JobClassFactory(scheduled_time=base_time - timedelta(minutes=30),
-                                   repeat=5)
+        job = self.JobClassFactory(scheduled_time=base_time - timedelta(minutes=30), repeat=5)
         self.assertEqual(job.repeat, 4)
         self.assertEqual(job.scheduled_time, base_time + timedelta(minutes=30))
         self.assertEqual(job.is_scheduled(), True)
@@ -409,20 +376,6 @@ class TestCronJob(BaseTestCases.TestBaseJob):
         job.callable = 'scheduler.tests.test_job'
         with self.assertRaises(ValidationError):
             job.clean_cron_string()
-
-    def test_cron_schedule(self):
-        job = self.JobClassFactory()
-        job.id = 1
-        successful = job.schedule()
-        self.assertTrue(successful)
-        self.assertIsNotNone(job.job_id)
-
-    def test_cron_unschedulable(self):
-        job = self.JobClassFactory()
-        job.enabled = False
-        successful = job.schedule()
-        self.assertFalse(successful)
-        self.assertIsNone(job.job_id)
 
     def test_repeat(self):
         job = self.JobClassFactory(repeat=10)
