@@ -6,8 +6,11 @@ from datetime import timedelta
 import croniter
 import django_rq
 from django.conf import settings
+from django.contrib.contenttypes.fields import GenericForeignKey, GenericRelation
+from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Case, When, Value
 from django.templatetags.tz import utc
 from django.utils.encoding import python_2_unicode_compatible
 from django.utils.timezone import now
@@ -19,10 +22,92 @@ RQ_SCHEDULER_INTERVAL = getattr(settings, "DJANGO_RQ_SCHEDULER_INTERVAL", 60)
 
 
 @python_2_unicode_compatible
+class BaseJobArg(models.Model):
+
+    ARG_TYPE = Choices(
+        ('str_val', _('string')),
+        ('int_val', _('int')),
+        ('bool_val', _('boolean')),
+        ('datetime_val', _('Datetime')),
+    )
+    arg_type = models.CharField(
+        _('Argument Type'), max_length=12, choices=ARG_TYPE, default=ARG_TYPE.str_val
+    )
+    str_val = models.CharField(_('String Value'), blank=True, max_length=255)
+    int_val = models.IntegerField(_('Int Value'), blank=True, null=True)
+    bool_val = models.BooleanField(_('Boolean Value'), default=False)
+    datetime_val = models.DateTimeField(_('Datetime Value'), blank=True, null=True)
+
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
+    object_id = models.PositiveIntegerField()
+    content_object = GenericForeignKey()
+
+    def __repr__(self):
+        return repr(self.value())
+
+    def __str__(self):
+        return str(self.value())
+
+    def clean(self):
+        self.clean_one_value()
+
+    def clean_one_value(self):
+        count = 0
+        count += 1 if self.str_val != '' else 0
+        count += 1 if self.int_val else 0
+        count += 1 if self.datetime_val else 0
+        count += 1 if self.bool_val else 0
+        # Catch case where bool_val is intended to be false and bool is selected.
+        count += 1 if self.arg_type == 'bool_val' and self.bool_val is False else 0
+        if count == 0:
+            raise ValidationError({
+                'arg_type': ValidationError(
+                    _('At least one arg type must have a value'), code='invalid')
+            })
+        if count > 1:
+            raise ValidationError({
+                'arg_type': ValidationError(
+                    _('There are multiple arg types with values'), code='invalid')
+            })
+
+    def save(self, **kwargs):
+        super(BaseJobArg, self).save(**kwargs)
+        self.content_object.save()
+
+    def delete(self, **kwargs):
+        super(BaseJobArg, self).delete(**kwargs)
+        self.content_object.save()
+
+    def value(self):
+        return getattr(self, self.arg_type)
+
+    class Meta:
+        abstract = True
+        ordering = ['id']
+
+
+class JobArg(BaseJobArg):
+    pass
+
+
+class JobKwarg(BaseJobArg):
+    key = models.CharField(max_length=255)
+
+    def __str__(self):
+        key, value = self.value()
+        return 'key={} value={}'.format(key, value)
+
+    def value(self):
+        return self.key, super(JobKwarg, self).value()
+
+
+@python_2_unicode_compatible
 class BaseJob(TimeStampedModel):
 
     name = models.CharField(_('name'), max_length=128, unique=True)
     callable = models.CharField(_('callable'), max_length=2048)
+    callable_args = GenericRelation(JobArg, related_query_name='args')
+    callable_kwargs = GenericRelation(JobKwarg, related_query_name='kwargs')
     enabled = models.BooleanField(_('enabled'), default=True)
     queue = models.CharField(_('queue'), max_length=16)
     job_id = models.CharField(
@@ -92,6 +177,23 @@ class BaseJob(TimeStampedModel):
         self.unschedule()
         super(BaseJob, self).delete(**kwargs)
 
+    def function_string(self):
+        func = self.callable + "(\u200b{})"  # zero-width space allows textwrap
+        args = self.parse_args()
+        args_list = [repr(arg) for arg in args]
+        kwargs = self.parse_kwargs()
+        kwargs_list = [k + '=' + repr(v) for (k, v) in kwargs.items()]
+        return func.format(', '.join(args_list + kwargs_list))
+    function_string.short_description = 'Callable'
+
+    def parse_args(self):
+        args = self.callable_args.all()
+        return [arg.value() for arg in args]
+
+    def parse_kwargs(self):
+        kwargs = self.callable_kwargs.all()
+        return dict([kwarg.value() for kwarg in kwargs])
+
     def scheduler(self):
         return django_rq.get_scheduler(self.queue, interval=RQ_SCHEDULER_INTERVAL)
 
@@ -135,7 +237,7 @@ class ScheduledJob(ScheduledTimeMixin, BaseJob):
             return False
         if result is False:
             return False
-        kwargs = dict()
+        kwargs = self.parse_kwargs()
         if self.timeout:
             kwargs['timeout'] = self.timeout
         if self.result_ttl is not None:
@@ -143,6 +245,7 @@ class ScheduledJob(ScheduledTimeMixin, BaseJob):
         job = self.scheduler().enqueue_at(
             self.schedule_time_utc(),
             self.callable_func(),
+            *self.parse_args(),
             **kwargs
         )
         self.job_id = job.id
@@ -226,7 +329,9 @@ class RepeatableJob(ScheduledTimeMixin, BaseJob):
             return False
         kwargs = dict(
             interval=self.interval_seconds(),
-            repeat=self.repeat
+            repeat=self.repeat,
+            args=self.parse_args(),
+            kwargs=self.parse_kwargs(),
         )
         if self.timeout:
             kwargs['timeout'] = self.timeout
@@ -272,7 +377,9 @@ class CronJob(BaseJob):
         if result is False:
             return False
         kwargs = dict(
-            repeat=self.repeat
+            repeat=self.repeat,
+            args=self.parse_args(),
+            kwargs=self.parse_kwargs(),
         )
         if self.timeout:
             kwargs['timeout'] = self.timeout

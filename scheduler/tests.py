@@ -2,18 +2,20 @@
 from __future__ import unicode_literals
 
 from datetime import datetime, timedelta
+from itertools import combinations
 
 import django_rq
 import factory
 import fakeredis
 import pytz
 from django.conf import settings
+from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import timezone
 from django_rq import job
 
-from scheduler.models import BaseJob, CronJob, RepeatableJob, ScheduledJob
+from scheduler.models import BaseJob, BaseJobArg, CronJob, JobArg, JobKwarg, RepeatableJob, ScheduledJob
 
 server = fakeredis.FakeServer()
 
@@ -64,15 +66,121 @@ class CronJobFactory(BaseJobFactory):
         model = CronJob
 
 
+class BaseJobArgFactory(factory.DjangoModelFactory):
+    arg_type = 'str_val'
+    str_val = ''
+    int_val = None
+    bool_val = False
+    datetime_val = None
+    object_id = factory.SelfAttribute('content_object.id')
+    content_type = factory.LazyAttribute(
+        lambda o: ContentType.objects.get_for_model(o.content_object))
+    content_object = factory.SubFactory(ScheduledJobFactory)
+
+    class Meta:
+        exclude = ['content_object']
+        abstract = True
+
+
+class JobArgFactory(BaseJobArgFactory):
+    class Meta:
+        model = JobArg
+
+
+class JobKwargFactory(BaseJobArgFactory):
+    key = factory.Sequence(lambda n: 'key%d' % n)
+
+    class Meta:
+        model = JobKwarg
+
+
 @job
 def test_job():
     return 1 + 1
+
+
+@job
+def test_args_kwargs(*args, **kwargs):
+    func = "test_args_kwargs({})"
+    args_list = [repr(arg) for arg in args]
+    kwargs_list = [k + '=' + repr(v) for (k, v) in kwargs.items()]
+    return func.format(', '.join(args_list + kwargs_list))
 
 
 test_non_callable = 'I am a teapot'
 
 
 class BaseTestCases:
+    class TestBaseJobArg(TestCase):
+        JobArgClass = BaseJobArg
+        JobArgClassFactory = BaseJobArgFactory
+
+        def test_clean_no_values(self):
+            arg = self.JobArgClassFactory()
+            with self.assertRaises(ValidationError):
+                arg.clean_one_value()
+
+        def test_clean_one_value(self):
+            test_kwargs = {'int_val': 1, 'bool_val': True, 'datetime_val': timezone.now(), 'str_val': 'not blank'}
+            for kwarg_set in combinations(test_kwargs, 1):
+                arg = self.JobArgClassFactory(**{k: v for k, v in test_kwargs.items() if k in kwarg_set})
+                try:
+                    arg.clean_one_value()
+                except ValidationError as e:
+                    self.assertTrue(False, msg=e)
+
+        # False bool values are ignored when it's not the arg_type
+        def test_clean_multiple_values(self):
+            test_kwargs = {'int_val': 1, 'datetime_val': timezone.now(), 'str_val': 'not blank'}
+            for k in range(2, len(test_kwargs) + 1):
+                for kwarg_set in combinations(test_kwargs, k):
+                    arg = self.JobArgClassFactory(**{k: v for k, v in test_kwargs.items() if k in kwarg_set})
+                    with self.assertRaises(ValidationError):
+                        arg.clean_one_value()
+
+        def test_clean_multiple_values_with_bool(self):
+            test_kwargs = {'int_val': 1, 'bool_val': True, 'datetime_val': timezone.now(), 'str_val': 'not blank'}
+            for k in range(2, len(test_kwargs) + 1):
+                for kwarg_set in combinations(test_kwargs, k):
+                    arg = self.JobArgClassFactory(**{k: v for k, v in test_kwargs.items() if k in kwarg_set})
+                    with self.assertRaises(ValidationError):
+                        arg.clean_one_value()
+
+        def test_clean_one_value_invalid_str_int(self):
+            arg = self.JobArgClassFactory(str_val='not blank', int_val=1, datetime_val=None)
+            with self.assertRaises(ValidationError):
+                arg.clean_one_value()
+
+        def test_clean_one_value_invalid_str_datetime(self):
+            arg = self.JobArgClassFactory(str_val='not blank', int_val=None, datetime_val=timezone.now())
+            with self.assertRaises(ValidationError):
+                arg.clean_one_value()
+
+        def test_clean_one_value_invalid_int_datetime(self):
+            arg = self.JobArgClassFactory(str_val='', int_val=1, datetime_val=timezone.now())
+            with self.assertRaises(ValidationError):
+                arg.clean_one_value()
+
+        def test_clean_one_value_valid_bool(self):
+            arg = self.JobArgClassFactory(arg_type='bool_val')
+            try:
+                arg.clean_one_value()
+            except ValidationError as e:
+                self.assertFalse(True, msg=e)
+            arg = self.JobArgClassFactory(arg_type='bool_val', bool_val=True)
+            try:
+                arg.clean_one_value()
+            except ValidationError as e:
+                self.assertFalse(True, msg=e)
+
+        def test_clean_invalid(self):
+            arg = self.JobArgClassFactory(str_val='str', int_val=1, datetime_val=timezone.now())
+            with self.assertRaises(ValidationError):
+                arg.clean()
+
+        def test_clean(self):
+            arg = self.JobArgClassFactory(str_val='something')
+            self.assertIsNone(arg.clean())
 
     class TestBaseJob(TestCase):
         def setUp(self):
@@ -233,6 +341,73 @@ class BaseTestCases:
             entry = next(i for i in scheduler.get_jobs() if i.id == job.job_id)
             self.assertEqual(entry.perform(), 2)
 
+        def test_callable_empty_args_and_kwargs(self):
+            job = self.JobClassFactory(callable='scheduler.tests.test_args_kwargs')
+            scheduler = django_rq.get_scheduler(job.queue)
+            entry = next(i for i in scheduler.get_jobs() if i.id == job.job_id)
+            self.assertEqual(entry.perform(), 'test_args_kwargs()')
+
+        def test_delete_args(self):
+            job = self.JobClassFactory()
+            arg = JobArgFactory(str_val='one', content_object=job)
+            self.assertEqual(1, job.callable_args.count())
+            arg.delete()
+            self.assertEqual(0, job.callable_args.count())
+
+        def test_delete_kwargs(self):
+            job = self.JobClassFactory()
+            kwarg = JobKwargFactory(key='key1', arg_type='str_val', str_val='one', content_object=job)
+            self.assertEqual(1, job.callable_kwargs.count())
+            kwarg.delete()
+            self.assertEqual(0, job.callable_kwargs.count())
+
+        def test_parse_args(self):
+            job = self.JobClassFactory()
+            date = timezone.now()
+            JobArgFactory(str_val='one', content_object=job)
+            JobArgFactory(arg_type='int_val', int_val=2, content_object=job)
+            JobArgFactory(arg_type='bool_val', bool_val=True, content_object=job)
+            JobArgFactory(arg_type='bool_val', bool_val=False, content_object=job)
+            JobArgFactory(arg_type='datetime_val', datetime_val=date, content_object=job)
+            self.assertEqual(job.parse_args(), ['one', 2, True, False, date])
+
+        def test_parse_kwargs(self):
+            job = self.JobClassFactory()
+            date = timezone.now()
+            JobKwargFactory(key='key1', arg_type='str_val', str_val='one', content_object=job)
+            JobKwargFactory(key='key2', arg_type='int_val', int_val=2, content_object=job)
+            JobKwargFactory(key='key3', arg_type='bool_val', bool_val=True, content_object=job)
+            JobKwargFactory(key='key4', arg_type='datetime_val', datetime_val=date, content_object=job)
+            self.assertEqual(job.parse_kwargs(), dict(key1='one', key2=2, key3=True, key4=date))
+
+        def test_callable_args_and_kwargs(self):
+            job = self.JobClassFactory(callable='scheduler.tests.test_args_kwargs')
+            date = timezone.now()
+            JobArgFactory(arg_type='str_val', str_val='one', content_object=job)
+            JobKwargFactory(key='key1', arg_type='int_val', int_val=2, content_object=job)
+            JobKwargFactory(key='key2', arg_type='datetime_val', datetime_val=date, content_object=job)
+            JobKwargFactory(key='key3', arg_type='bool_val', bool_val=False, content_object=job)
+            job.save()
+            scheduler = django_rq.get_scheduler(job.queue)
+            entry = next(i for i in scheduler.get_jobs() if i.id == job.job_id)
+            self.assertEqual(entry.perform(),
+                             "test_args_kwargs('one', key1=2, key2={}, key3=False)".format(repr(date)))
+
+        def test_function_string(self):
+            job = self.JobClassFactory()
+            date = timezone.now()
+            JobArgFactory(arg_type='str_val', str_val='one', content_object=job)
+            JobArgFactory(arg_type='int_val', int_val=1, content_object=job)
+            JobArgFactory(arg_type='datetime_val', datetime_val=date, content_object=job)
+            JobArgFactory(arg_type='bool_val', bool_val=True, content_object=job)
+            JobKwargFactory(key='key1', arg_type='str_val', str_val='one', content_object=job)
+            JobKwargFactory(key='key2', arg_type='int_val', int_val=2, content_object=job)
+            JobKwargFactory(key='key3', arg_type='datetime_val', datetime_val=date, content_object=job)
+            JobKwargFactory(key='key4', arg_type='bool_val', bool_val=False, content_object=job)
+            self.assertEqual(job.function_string(),
+                             ("scheduler.tests.test_job(\u200b'one', 1, {date}, True, " +
+                              "key1='one', key2=2, key3={date}, key4=False)").format(date=repr(date)))
+
     class TestSchedulableJob(TestBaseJob):
         # Currently ScheduledJob and RepeatableJob
         JobClass = BaseJob
@@ -256,6 +431,92 @@ class BaseTestCases:
             scheduler = django_rq.get_scheduler(job.queue)
             entry = next(i for i in scheduler.get_jobs() if i.id == job.job_id)
             self.assertEqual(entry.result_ttl, 500)
+
+
+class TestJobArg(BaseTestCases.TestBaseJobArg):
+    JobArgClass = JobArg
+    JobArgClassFactory = JobArgFactory
+
+    def test_value(self):
+        arg = self.JobArgClassFactory(arg_type='str_val', str_val='something')
+        self.assertEqual(arg.value(), 'something')
+
+    def test__str__str_val(self):
+        arg = self.JobArgClassFactory(arg_type='str_val', str_val='something')
+        self.assertEqual('something', str(arg))
+
+    def test__str__int_val(self):
+        arg = self.JobArgClassFactory(arg_type='int_val', int_val=1)
+        self.assertEqual('1', str(arg))
+
+    def test__str__datetime_val(self):
+        time = timezone.now()
+        arg = self.JobArgClassFactory(arg_type='datetime_val', datetime_val=time)
+        self.assertEqual(str(time), str(arg))
+
+    def test__str__bool_val(self):
+        arg = self.JobArgClassFactory(arg_type='bool_val', bool_val=True)
+        self.assertEqual('True', str(arg))
+
+    def test__repr__str_val(self):
+        arg = self.JobArgClassFactory(arg_type='str_val', str_val='something')
+        self.assertEqual("'something'", repr(arg))
+
+    def test__repr__int_val(self):
+        arg = self.JobArgClassFactory(arg_type='int_val', int_val=1)
+        self.assertEqual('1', repr(arg))
+
+    def test__repr__datetime_val(self):
+        time = timezone.now()
+        arg = self.JobArgClassFactory(arg_type='datetime_val', datetime_val=time)
+        self.assertEqual(repr(time), repr(arg))
+
+    def test__repr__bool_val(self):
+        arg = self.JobArgClassFactory(arg_type='bool_val', bool_val=False)
+        self.assertEqual('False', repr(arg))
+
+
+class TestJobKwarg(BaseTestCases.TestBaseJobArg):
+    JobArgClass = JobKwarg
+    JobArgClassFactory = JobKwargFactory
+
+    def test_value(self):
+        kwarg = self.JobArgClassFactory(key='key', arg_type='str_val', str_val='value')
+        self.assertEqual(kwarg.value(), ('key', 'value'))
+
+    def test__str__str_val(self):
+        kwarg = self.JobArgClassFactory(key='key', arg_type='str_val', str_val='something')
+        self.assertEqual("key=key value=something", str(kwarg))
+
+    def test__str__int_val(self):
+        kwarg = self.JobArgClassFactory(key='key', arg_type='int_val', int_val=1)
+        self.assertEqual("key=key value=1", str(kwarg))
+
+    def test__str__datetime_val(self):
+        time = timezone.now()
+        kwarg = self.JobArgClassFactory(key='key', arg_type='datetime_val', datetime_val=time)
+        self.assertEqual("key=key value={}".format(time), str(kwarg))
+
+    def test__str__bool_val(self):
+        kwarg = self.JobArgClassFactory(key='key', arg_type='bool_val', bool_val=True)
+        self.assertEqual("key=key value=True", str(kwarg))
+
+    def test__repr__str_val(self):
+        kwarg = self.JobArgClassFactory(key='key', arg_type='str_val', str_val='something')
+        self.assertEqual("('key', 'something')", repr(kwarg))
+
+    def test__repr__int_val(self):
+        kwarg = self.JobArgClassFactory(key='key', arg_type='int_val', int_val=1)
+        self.assertEqual("('key', 1)", repr(kwarg))
+
+    def test__repr__datetime_val(self):
+        time = timezone.now()
+        kwarg = self.JobArgClassFactory(key='key', arg_type='datetime_val', datetime_val=time)
+        self.assertEqual("('key', {})".format(repr(time)), repr(kwarg))
+
+    def test__repr__bool_val(self):
+        kwarg = self.JobArgClassFactory(key='key', arg_type='bool_val', bool_val=True)
+        self.assertEqual("('key', True)", repr(kwarg))
 
 
 class TestScheduledJob(BaseTestCases.TestSchedulableJob):
