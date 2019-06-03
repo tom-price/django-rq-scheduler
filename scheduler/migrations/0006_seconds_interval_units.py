@@ -11,6 +11,12 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.AlterField(
+            model_name='cronjob',
+            name='cron_string',
+            field=models.CharField(help_text='Define the schedule in a crontab like syntax. Times are in UTC.',
+                                   max_length=64, verbose_name='cron string'),
+        ),
+        migrations.AlterField(
             model_name='repeatablejob',
             name='interval_unit',
             field=models.CharField(choices=[('seconds', 'seconds'), ('minutes', 'minutes'), ('hours', 'hours'), ('days', 'days'), ('weeks', 'weeks')], default='hours', max_length=12, verbose_name='interval unit'),

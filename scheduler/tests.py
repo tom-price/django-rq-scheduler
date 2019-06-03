@@ -314,6 +314,7 @@ class TestRepeatableJob(BaseTestCases.TestSchedulableJob):
         job.queue = list(settings.RQ_QUEUES)[0]
         job.callable = 'scheduler.tests.test_job'
         job.interval = 1
+        job.repeat = 1
         job.result_ttl = 3599
         job.interval_unit = 'hours'
         with self.assertRaises(ValidationError):
