@@ -2,19 +2,47 @@ from __future__ import unicode_literals
 
 from django.conf import settings
 from django.contrib import admin, messages
+from django.contrib.contenttypes.admin import GenericStackedInline
 from django.templatetags.tz import utc
 from django.utils.timezone import now
 from django.utils.translation import ugettext_lazy as _
 
-from scheduler.models import CronJob, RepeatableJob, ScheduledJob
+from scheduler.models import CronJob, JobArg, JobKwarg, RepeatableJob, ScheduledJob
 
 QUEUES = [(key, key) for key in settings.RQ_QUEUES.keys()]
 
 
+class HiddenMixin(object):
+    # pass
+    class Media:
+        js = ['admin/js/jquery.init.js', 'scheduler/js/base.js']
+
+
+class JobArgInline(HiddenMixin, GenericStackedInline):
+    model = JobArg
+    extra = 0
+    fieldsets = (
+        (None, {
+            'fields': ('arg_type', 'str_val', 'int_val', 'bool_val', 'datetime_val',),
+        }),
+    )
+
+
+class JobKwargInline(HiddenMixin, GenericStackedInline):
+    model = JobKwarg
+    extra = 0
+    fieldsets = (
+        (None, {
+            'fields': ('key', 'arg_type', 'str_val', 'int_val', 'bool_val', 'datetime_val',),
+        }),
+    )
+
+
 class JobAdmin(admin.ModelAdmin):
     actions = ['delete_model', 'disable_selected', 'enable_selected', 'run_job_now']
+    inlines = [JobArgInline, JobKwargInline]
     list_filter = ('enabled', )
-    list_display = ('enabled', 'name', 'job_id', 'is_scheduled',)
+    list_display = ('enabled', 'name', 'job_id', 'function_string', 'is_scheduled',)
     list_display_links = ('name',)
     readonly_fields = ('job_id', )
     fieldsets = (
