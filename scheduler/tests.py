@@ -590,6 +590,14 @@ class TestRepeatableJob(BaseTestCases.TestSchedulableJob):
         job.interval_unit = 'hours'
         job.clean_result_ttl()
 
+    def test_clean_undefined_result_ttl(self):
+        job = self.JobClass()
+        job.queue = list(settings.RQ_QUEUES)[0]
+        job.callable = 'scheduler.tests.test_job'
+        job.interval = 1
+        job.interval_unit = 'hours'
+        job.clean_result_ttl()
+
     def test_interval_seconds_weeks(self):
         job = RepeatableJobFactory(interval=2, interval_unit='weeks')
         self.assertEqual(1209600.0, job.interval_seconds())

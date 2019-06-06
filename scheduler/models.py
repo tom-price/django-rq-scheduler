@@ -294,7 +294,7 @@ class RepeatableJob(ScheduledTimeMixin, BaseJob):
         Throws an error if there are repeats left to run and the result_ttl won't last until the next scheduled time.
         :return:
         """
-        if self.result_ttl != -1 and self.result_ttl < self.interval_seconds() and self.repeat:
+        if self.result_ttl and self.result_ttl != -1 and self.result_ttl < self.interval_seconds() and self.repeat:
             raise ValidationError(
                 _("Job result_ttl must be either indefinite (-1) or "
                   "longer than the interval, %(interval)s seconds, to ensure rescheduling."),
