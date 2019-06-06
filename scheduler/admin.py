@@ -2,48 +2,16 @@ from __future__ import unicode_literals
 
 from django.conf import settings
 from django.contrib import admin
-from django.contrib.contenttypes.admin import GenericStackedInline
 from django.utils.translation import ugettext_lazy as _
 
-from scheduler.models import CronJob, RepeatableJob, ScheduledJob,\
-    JobArg, JobKwarg
+from scheduler.models import CronJob, RepeatableJob, ScheduledJob
 
 
 QUEUES = [(key, key) for key in settings.RQ_QUEUES.keys()]
 
 
-class JobArgInline(GenericStackedInline):
-    model = JobArg
-    extra = 0
-    fieldsets = (
-        (None, {
-            'fields': ('arg_name', 'str_val', 'int_val', 'datetime_val',),
-        }),
-    )
-    class Media:
-        js = ('scheduler/js/base.js',)
-
-
-class JobKwargInline(GenericStackedInline):
-    model = JobKwarg
-    extra = 0
-    fieldsets = (
-        (None, {
-            'fields': ('key', 'arg_name', 'str_val', 'int_val', 'datetime_val',),
-        }),
-    )
-
-    class Media:
-        js = ('scheduler/js/base.js',)
-
-
 class QueueMixin(object):
-    actions = ['delete_model', 'disable_selected', 'enable_selected', ]
-    list_display_links = ('name', )
-    inlines = [JobArgInline, JobKwargInline]
-    list_filter = ('enabled', 'callable')
-    readonly_fields = ('job_id', )
-    search_fields = ('name', 'callable', )
+    actions = ['delete_model']
 
     def get_actions(self, request):
         actions = super(QueueMixin, self).get_actions(request)
@@ -63,27 +31,18 @@ class QueueMixin(object):
             obj.delete()
     delete_model.short_description = _("Delete selected %(verbose_name_plural)s")
 
-    def disable_selected(self, request, queryset):
-        for obj in queryset.all():
-            obj.enabled = False
-            obj.save()
-    disable_selected.short_description = _("Disable selected %(verbose_name_plural)s")
-
-    def enable_selected(self, request, queryset):
-        for obj in queryset.all():
-            obj.enabled = True
-            obj.save()
-    enable_selected.short_description = _("Enable selected %(verbose_name_plural)s")
-
 
 @admin.register(ScheduledJob)
 class ScheduledJobAdmin(QueueMixin, admin.ModelAdmin):
     list_display = (
-        'enabled', 'name', 'job_id', ScheduledJob.function_string, 'is_scheduled', 'scheduled_time', )
+        'name', 'job_id', 'is_scheduled', 'scheduled_time', 'enabled')
+    list_filter = ('enabled', )
+    list_editable = ('enabled', )
 
+    readonly_fields = ('job_id', )
     fieldsets = (
         (None, {
-            'fields': ('name', 'callable', 'enabled'),
+            'fields': ('name', 'callable', 'enabled', ),
         }),
         (_('RQ Settings'), {
             'fields': ('queue', 'job_id', ),
@@ -101,9 +60,12 @@ class ScheduledJobAdmin(QueueMixin, admin.ModelAdmin):
 @admin.register(RepeatableJob)
 class RepeatableJobAdmin(QueueMixin, admin.ModelAdmin):
     list_display = (
-        'enabled', 'name', 'job_id', RepeatableJob.function_string, 'is_scheduled', 'scheduled_time',
-        'interval_display')
+        'name', 'job_id', 'is_scheduled', 'scheduled_time', 'interval_display',
+        'enabled')
+    list_filter = ('enabled', )
+    list_editable = ('enabled', )
 
+    readonly_fields = ('job_id', )
     fieldsets = (
         (None, {
             'fields': ('name', 'callable', 'enabled', ),
@@ -126,8 +88,11 @@ class RepeatableJobAdmin(QueueMixin, admin.ModelAdmin):
 @admin.register(CronJob)
 class CronJobAdmin(QueueMixin, admin.ModelAdmin):
     list_display = (
-        'enabled', 'name', 'job_id', CronJob.function_string, 'is_scheduled', 'cron_string')
+        'name', 'job_id', 'is_scheduled', 'cron_string', 'enabled')
+    list_filter = ('enabled', )
+    list_editable = ('enabled', )
 
+    readonly_fields = ('job_id', )
     fieldsets = (
         (None, {
             'fields': ('name', 'callable', 'enabled', ),
