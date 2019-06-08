@@ -8,8 +8,8 @@ Currently, when you pip install Django RQ Scheduler the following packages are a
 
 * django >= 1.9
 * django-model-utils >= 2.4
-* django-rq >= 0.9.3 (Django RQ requires RQ >= 0.5.5)
-* rq-scheduler >= 0.6.0
+* django-rq >= 2.0 (Django RQ requires RQ >= 1.0 due to changes in redis >= 3)
+* rq-scheduler >= 0.9.0
 * pytz >= 2015.7
 * croniter >= 0.3.24
 
@@ -17,6 +17,7 @@ Testing also requires:
 
 * factory_boy >= 2.6.1
 * psycopg2 >= 2.6.1
+* fakeredis >= 1
 
 
 ## Usage
@@ -104,6 +105,8 @@ def count():
 6. Enter the time the first job is to be executed in the **Scheduled time** field. Side Note: Enter the date via the browser's local timezone, the time will automatically convert UTC.
 
 7. Enter an **Interval**, and choose the **Interval unit**. This will calculate the time before the function is called again.
+    * The **result TTL** must be either indefinite `-1`, unset,  or greater than this interval.
+    * The **Interval** must be a multiple of the scheduler's interval. With a default config this interval is 60 seconds and is only a consideration when using `seconds` as the **Interval Unit**. If a shorter interval is needed **rq-scheduler**'s interval can be changed by setting `DJANGO_RQ_SCHEDULER_INTERVAL` to something other than `60`; it's advised to set it to a divisor of `60`.
 
 8. In the **Repeat** field, enter the number of time the job is to be ran. Leaving the field empty, means the job will be scheduled to run forever.
 
