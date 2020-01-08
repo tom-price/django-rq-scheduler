@@ -2,6 +2,7 @@
 
 import os
 from distutils.core import setup
+
 from setuptools import find_packages
 
 
@@ -14,8 +15,8 @@ def long_desc(root_path):
                 yield f.read()
 
 
-HERE = os.path.abspath(os.path.dirname(__file__))
-long_description = "\n\n".join(long_desc(HERE))
+PATH_OF_RUNNING_SCRIPT = os.path.abspath(os.path.dirname(__file__))
+long_description = "\n\n".join(long_desc(PATH_OF_RUNNING_SCRIPT))
 
 
 def get_version(root_path):
@@ -26,8 +27,7 @@ def get_version(root_path):
 
 
 tests_require = [
-    "factory_boy>=2.6.1",
-    "psycopg2>=2.6.1",
+    'factory_boy>=2.11.1',
 ]
 
 
