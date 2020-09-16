@@ -33,7 +33,7 @@ tests_require = [
 
 setup(
     name="django-rq-scheduler",
-    version=get_version(HERE),
+    version=get_version(PATH_OF_RUNNING_SCRIPT),
     description="A database backed job scheduler for Django RQ",
     long_description=long_description,
     packages=find_packages(),
@@ -47,11 +47,14 @@ setup(
         "django-model-utils>=2.4.0",
         "django-rq>=0.9.3",
         "rq-scheduler>=0.6.0",
-        "pytz>=2015.7",
+        "pytz>=2018.5",
         "croniter>=0.3.24",
     ],
     tests_require=tests_require,
-    extras_require={"test": tests_require,},
+    test_suite='scheduler.tests',
+    extras_require={
+        "test": tests_require,
+    },
     classifiers=[
         "Development Status :: 4 - Beta",
         "Environment :: Web Environment",
@@ -60,7 +63,8 @@ setup(
         "Operating System :: OS Independent",
         "Programming Language :: Python",
         "Programming Language :: Python :: 3.6",
-        "Programming Language :: Python :: 3.7" "Framework :: Django",
+        "Programming Language :: Python :: 3.7",
+        "Framework :: Django",
         "Framework :: Django :: 2.0",
         "Framework :: Django :: 3.0",
     ],
