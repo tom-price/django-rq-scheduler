@@ -6,7 +6,6 @@ from itertools import combinations
 
 import django_rq
 import factory
-import fakeredis
 import pytz
 from django.conf import settings
 from django.contrib.contenttypes.models import ContentType
@@ -17,10 +16,8 @@ from django_rq import job
 
 from scheduler.models import BaseJob, BaseJobArg, CronJob, JobArg, JobKwarg, RepeatableJob, ScheduledJob
 
-server = fakeredis.FakeServer()
 
-
-class BaseJobFactory(factory.DjangoModelFactory):
+class BaseJobFactory(factory.django.DjangoModelFactory):
     name = factory.Sequence(lambda n: 'Scheduled Job %d' % n)
     job_id = None
     queue = list(settings.RQ_QUEUES.keys())[0]
@@ -183,9 +180,6 @@ class BaseTestCases:
             self.assertIsNone(arg.clean())
 
     class TestBaseJob(TestCase):
-        def setUp(self):
-            django_rq.queues.get_redis_connection = lambda _, strict: fakeredis.FakeRedis(server=server)
-
         JobClass = BaseJob
         JobClassFactory = BaseJobFactory
 
@@ -578,6 +572,7 @@ class TestRepeatableJob(BaseTestCases.TestSchedulableJob):
         job.repeat = 1
         job.result_ttl = 3599
         job.interval_unit = 'hours'
+        job.repeat = 42
         with self.assertRaises(ValidationError):
             job.clean_result_ttl()
 
