@@ -1,11 +1,10 @@
-from __future__ import unicode_literals
 
 from django.conf import settings
 from django.contrib import admin, messages
 from django.contrib.contenttypes.admin import GenericStackedInline
 from django.templatetags.tz import utc
 from django.utils.timezone import now
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from scheduler.models import CronJob, JobArg, JobKwarg, RepeatableJob, ScheduledJob
 

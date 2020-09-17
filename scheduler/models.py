@@ -1,5 +1,3 @@
-from __future__ import unicode_literals
-
 import importlib
 from datetime import timedelta
 
@@ -10,18 +8,16 @@ from django.contrib.contenttypes.fields import GenericForeignKey, GenericRelatio
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.db import models
-from django.db.models import Case, When, Value
 from django.templatetags.tz import utc
-from django.utils.encoding import python_2_unicode_compatible
+from django.utils.translation import gettext_lazy as _
 from django.utils.timezone import now
-from django.utils.translation import ugettext_lazy as _
+
 from model_utils import Choices
 from model_utils.models import TimeStampedModel
 
 RQ_SCHEDULER_INTERVAL = getattr(settings, "DJANGO_RQ_SCHEDULER_INTERVAL", 60)
 
 
-@python_2_unicode_compatible
 class BaseJobArg(models.Model):
 
     ARG_TYPE = Choices(
@@ -101,7 +97,6 @@ class JobKwarg(BaseJobArg):
         return self.key, super(JobKwarg, self).value()
 
 
-@python_2_unicode_compatible
 class BaseJob(TimeStampedModel):
 
     name = models.CharField(_('name'), max_length=128, unique=True)
