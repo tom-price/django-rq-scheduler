@@ -113,10 +113,17 @@ class JobAdmin(admin.ModelAdmin):
     def run_job_now(self, request, queryset):
         job_names = []
         for obj in queryset:
-            kwargs = dict(timeout=obj.timeout)
+            kwargs = obj.parse_kwargs()
+            if obj.timeout:
+                kwargs['timeout'] = obj.timeout
             if hasattr(obj, 'result_ttl') and obj.result_ttl is not None:
                 kwargs['job_result_ttl'] = obj.result_ttl
-            obj.scheduler().enqueue_at(utc(now()), obj.callable_func(), **kwargs)
+            obj.scheduler().enqueue_at(
+                utc(now()),
+                obj.callable_func(),
+                *obj.parse_args(),
+                **kwargs
+            )
             job_names.append(obj.name)
         self.message_user(request, "The following jobs have been run: %s" % ', '.join(job_names))
     run_job_now.short_description = "Run now"

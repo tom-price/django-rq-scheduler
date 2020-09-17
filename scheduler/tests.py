@@ -63,7 +63,7 @@ class CronJobFactory(BaseJobFactory):
         model = CronJob
 
 
-class BaseJobArgFactory(factory.DjangoModelFactory):
+class BaseJobArgFactory(factory.django.DjangoModelFactory):
     arg_type = 'str_val'
     str_val = ''
     int_val = None
