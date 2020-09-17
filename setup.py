@@ -27,8 +27,7 @@ def get_version(root_path):
 
 
 tests_require = [
-    'factory_boy>=2.11.1',
-    'fakeredis>=1',
+    'factory_boy>=2.11.1'
 ]
 
 
@@ -44,7 +43,7 @@ setup(
     url='https://github.com/istrategylabs/django-rq-scheduler',
     zip_safe=True,
     install_requires=[
-        'django>=1.9.0',
+        'django>=1.9.0,<3.0',
         'django-model-utils>=2.4.0',
         'django-rq>=2.0',
         'rq-scheduler>=0.9.0',
