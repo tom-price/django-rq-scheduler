@@ -87,7 +87,7 @@ class JobAdmin(admin.ModelAdmin):
         for obj in queryset:
             kwargs = dict(timeout=obj.timeout)
             if hasattr(obj, 'result_ttl') and obj.result_ttl is not None:
-                kwargs['result_ttl'] = obj.result_ttl
+                kwargs['job_result_ttl'] = obj.result_ttl
             obj.scheduler().enqueue_at(utc(now()), obj.callable_func(), **kwargs)
             job_names.append(obj.name)
         self.message_user(request, "The following jobs have been run: %s" % ', '.join(job_names))
