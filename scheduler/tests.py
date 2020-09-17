@@ -549,7 +549,7 @@ class TestRepeatableJob(BaseTestCases.TestSchedulableJob):
         job = self.JobClass()
         job.queue = list(settings.RQ_QUEUES)[0]
         job.callable = 'scheduler.tests.test_job'
-        job.interval = 30
+        job.interval = 10
         job.result_ttl = -1
         job.interval_unit = 'seconds'
         with self.assertRaises(ValidationError):
